@@ -13,11 +13,11 @@ public:
     CSsl();
     ~CSsl();
 
-    BOOLEAN Connect(const char *host, USHORT port);
+    BOOL Connect(const char *host, USHORT port);
     void Close();
-
-    int Send(const void *lpBuf, int nBufLen, int nFlags = 0);
-    int Recv(      void *lpBuf, int nBufLen, int nFlags = 0);
+    //
+    int Send(const void *lpBuf, int nBufLen);
+    int Recv(      void *lpBuf, int nBufLen);
 
     SECURITY_STATUS ClientCreateCredentials(const CHAR *pszUserName, PCredHandle phCreds);
     BOOL ClientConnect(const CHAR *szHostName);

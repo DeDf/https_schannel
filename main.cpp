@@ -23,12 +23,12 @@ int main()
     {
         if (ssl->Connect("www.baidu.com", 443))
         {
-            int len = ssl->Send(SendBuf, SendLen, 0);
+            int len = ssl->Send(SendBuf, SendLen);
 
             char buf[512];
             while (1)
             {
-                len = ssl->Recv(buf, sizeof(buf)-1, 0);
+                len = ssl->Recv(buf, sizeof(buf)-1);
                 if (len <= 0)
                     break;
 

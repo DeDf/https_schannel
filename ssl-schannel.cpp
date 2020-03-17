@@ -169,7 +169,7 @@ CSsl::~CSsl()
         delete [] m_pbIoBuffer;
 }
 
-BOOLEAN CSsl::Connect(const char *host, USHORT port)
+BOOL CSsl::Connect(const char *host, USHORT port)
 {
     CSsl *ssl = this;
 
@@ -184,12 +184,12 @@ BOOLEAN CSsl::Connect(const char *host, USHORT port)
     }
 
     if (ssl->s)
-        return 1;
+        return TRUE;
     else
-        return 0;
+        return FALSE;
 }
 
-int CSsl::Send(const void* lpBuf, int nBufLen, int nFlags) 
+int CSsl::Send(const void* lpBuf, int nBufLen) 
 {
 	int rc = 0;
 	SecPkgContext_StreamSizes Sizes;
@@ -286,7 +286,7 @@ int CSsl::Send(const void* lpBuf, int nBufLen, int nFlags)
                 }
             }
 
-            rc = SocketSend(this->s, (char *)pbIoBuffer, Buffers[0].cbBuffer + Buffers[1].cbBuffer + Buffers[2].cbBuffer, nFlags);
+            rc = SocketSend(this->s, (char *)pbIoBuffer, Buffers[0].cbBuffer + Buffers[1].cbBuffer + Buffers[2].cbBuffer, 0);
 
             if ((rc == SOCKET_ERROR) && (WSAGetLastError() == WSAEWOULDBLOCK))
             {
@@ -315,7 +315,7 @@ int CSsl::Send(const void* lpBuf, int nBufLen, int nFlags)
 	return dwTotSent > ((DWORD)nBufLen) ? nBufLen : dwTotSent;	
 }
 
-int CSsl::Recv(void* lpBuf, int nBufLen, int nFlags) 
+int CSsl::Recv(void *lpBuf, int nBufLen) 
 {
 	int rc = 0;
 	SecPkgContext_StreamSizes Sizes;
