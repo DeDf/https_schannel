@@ -1251,11 +1251,14 @@ LONG CSsl::ServerDisconect(PCredHandle phCreds, CtxtHandle *phContext)
 		pbMessage = (BYTE *)(OutBuffers[0].pvBuffer);
 		cbMessage = OutBuffers[0].cbBuffer;
 
-		if(pbMessage != NULL && cbMessage != 0) {
+		if(pbMessage != NULL && cbMessage != 0)
+        {
 			m_bAllowPlainText = TRUE; m_bConInit = FALSE;
-			cbData = Send(pbMessage, cbMessage);
+			cbData = SocketSend(this->s, (char *)pbMessage, cbMessage, 0);
+
 			m_bAllowPlainText = FALSE;
-			if(cbData == (DWORD)SOCKET_ERROR || cbData == 0) {
+			if(cbData == (DWORD)SOCKET_ERROR || cbData == 0)
+            {
 				Status = WSAGetLastError();
 				SetLastError(Status);
 				break;
@@ -1363,9 +1366,10 @@ BOOL CSsl::ServerHandshakeLoop(PCtxtHandle phContext, PCredHandle phCred, BOOL f
 
         if(0 == cbIoBuffer || scRet == SEC_E_INCOMPLETE_MESSAGE) {
 
-            if(fDoRead) {
+            if(fDoRead)
+            {
 				m_bAllowPlainText = TRUE;
-				err = Recv(IoBuffer+cbIoBuffer, IO_BUFFER_SIZE);
+				err = SocketRecv(this->s, (char *)IoBuffer+cbIoBuffer, IO_BUFFER_SIZE, 0);
 				m_bAllowPlainText = FALSE;
 
 				if (err == (DWORD)SOCKET_ERROR || err == 0) {
@@ -1413,10 +1417,10 @@ BOOL CSsl::ServerHandshakeLoop(PCtxtHandle phContext, PCredHandle phCred, BOOL f
              (FAILED(scRet) && (0 != (dwSSPIOutFlags & ISC_RET_EXTENDED_ERROR)))) {
 
             if  (OutBuffers[0].cbBuffer != 0    &&
-                 OutBuffers[0].pvBuffer != NULL ) {
-
+                 OutBuffers[0].pvBuffer != NULL )
+            {
 				m_bAllowPlainText = TRUE;
-                err = Send(OutBuffers[0].pvBuffer, OutBuffers[0].cbBuffer);
+                err = SocketSend(this->s, (char *)OutBuffers[0].pvBuffer, OutBuffers[0].cbBuffer, 0);
 				m_bAllowPlainText = FALSE;
 
                 g_pSecFuncTable->FreeContextBuffer( OutBuffers[0].pvBuffer );
