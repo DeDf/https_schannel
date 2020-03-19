@@ -102,23 +102,6 @@ int SocketSend(SOCKET s, const char * data, int len, int nFlags)
     return (OrigLen - len);
 }
 
-int SocketRecv(SOCKET s, char * data, int len, int nFlags)
-{
-    if (s == -1)
-        return -1;
-
-    int nBytes = recv(s, data, len, nFlags);
-    if (nBytes == 0)
-    {
-        return -1;
-    }
-
-    if (isagain(nBytes))
-        return 0;
-
-    return nBytes;
-}
-
 //----------------------------------------------------------------
 
 CSsl::CSsl() :
@@ -191,14 +174,12 @@ BOOL CSsl::Connect(const char *host, USHORT port)
 
 int CSsl::Send(const void* lpBuf, int nBufLen) 
 {
-	int rc = 0;
+    int ret = -1;
+    SECURITY_STATUS scRet;
 	SecPkgContext_StreamSizes Sizes;
-	SECURITY_STATUS scRet;
+	
 	SecBufferDesc   Message;
 	SecBuffer       Buffers[4];
-
-	SecBuffer *     pDataBuffer;
-	SecBuffer *     pExtraBuffer;
 
 	PBYTE pbIoBuffer = NULL;
 	DWORD cbIoBufferLength;
@@ -211,108 +192,87 @@ int CSsl::Send(const void* lpBuf, int nBufLen)
 	DWORD dwCurrLn = 0;
 	DWORD dwTotSent = 0;
 
+    scRet = g_pSecFuncTable->QueryContextAttributes(&m_hContext,SECPKG_ATTR_STREAM_SIZES,&Sizes);
+    if(scRet != SEC_E_OK)
+    {
+        return ret;
+    }
+
+    cbIoBufferLength = Sizes.cbHeader + 
+        Sizes.cbMaximumMessage +
+        Sizes.cbTrailer;
+
+    pbIoBuffer = new BYTE[cbIoBufferLength];
+    if (!pbIoBuffer)
+    {
+        return ret;
+    }
+    ZeroMemory(pbIoBuffer, cbIoBufferLength);
+
+    pbMessage = pbIoBuffer + Sizes.cbHeader;
+    dwAvaLn = Sizes.cbMaximumMessage;
+    dwDataToSend = (DWORD)nBufLen;
+
     do
     {
-        scRet = g_pSecFuncTable->QueryContextAttributes(&m_hContext,SECPKG_ATTR_STREAM_SIZES,&Sizes);
-        if(scRet != SEC_E_OK)
+        dwCurrLn = ((DWORD)nBufLen)-dwSendInd > dwAvaLn ? dwAvaLn : (((DWORD)nBufLen)-dwSendInd);
+
+        CopyMemory(pbMessage,((BYTE*)lpBuf)+dwSendInd,dwCurrLn);
+
+        dwSendInd += dwCurrLn;
+        dwDataToSend -= dwCurrLn;
+
+        cbMessage = dwCurrLn;
+
+        Buffers[0].pvBuffer     = pbIoBuffer;
+        Buffers[0].cbBuffer     = Sizes.cbHeader;
+        Buffers[0].BufferType   = SECBUFFER_STREAM_HEADER;
+
+        Buffers[1].pvBuffer     = pbMessage;
+        Buffers[1].cbBuffer     = cbMessage;
+        Buffers[1].BufferType   = SECBUFFER_DATA;
+
+        Buffers[2].pvBuffer     = pbMessage + cbMessage;
+        Buffers[2].cbBuffer     = Sizes.cbTrailer;
+        Buffers[2].BufferType   = SECBUFFER_STREAM_TRAILER;
+
+        Buffers[3].BufferType   = SECBUFFER_EMPTY;
+
+        Message.ulVersion       = SECBUFFER_VERSION;
+        Message.cBuffers        = 4;
+        Message.pBuffers        = Buffers;
+
+        scRet = g_pSecFuncTable->EncryptMessage(&m_hContext, 0, &Message, 0);
+        if(FAILED(scRet))
         {
             SetLastError(scRet);
             break;
         }
 
-        cbIoBufferLength = Sizes.cbHeader + 
-            Sizes.cbMaximumMessage +
-            Sizes.cbTrailer;
+        int rc = SocketSend(this->s, (char *)pbIoBuffer, Buffers[0].cbBuffer + Buffers[1].cbBuffer + Buffers[2].cbBuffer, 0);
 
-        pbIoBuffer = new BYTE[cbIoBufferLength];
-        if(pbIoBuffer == NULL)
+        if ((rc == SOCKET_ERROR) && (WSAGetLastError() == WSAEWOULDBLOCK))
         {
-            SetLastError(ERROR_OUTOFMEMORY);
-            break;
+            rc = nBufLen;
         }
-
-        pbMessage = pbIoBuffer + Sizes.cbHeader;
-        dwAvaLn = Sizes.cbMaximumMessage;
-        dwDataToSend = (DWORD)nBufLen;
-
-        do
+        else
         {
-            ZeroMemory(pbIoBuffer,cbIoBufferLength);
-            dwCurrLn = ((DWORD)nBufLen)-dwSendInd > dwAvaLn ? dwAvaLn : (((DWORD)nBufLen)-dwSendInd);
-
-            CopyMemory(pbMessage,((BYTE*)lpBuf)+dwSendInd,dwCurrLn);
-
-            dwSendInd += dwCurrLn;
-            dwDataToSend -= dwCurrLn;
-
-            cbMessage = dwCurrLn;
-
-            Buffers[0].pvBuffer     = pbIoBuffer;
-            Buffers[0].cbBuffer     = Sizes.cbHeader;
-            Buffers[0].BufferType   = SECBUFFER_STREAM_HEADER;
-
-            Buffers[1].pvBuffer     = pbMessage;
-            Buffers[1].cbBuffer     = cbMessage;
-            Buffers[1].BufferType   = SECBUFFER_DATA;
-
-            Buffers[2].pvBuffer     = pbMessage + cbMessage;
-            Buffers[2].cbBuffer     = Sizes.cbTrailer;
-            Buffers[2].BufferType   = SECBUFFER_STREAM_TRAILER;
-
-            Buffers[3].BufferType   = SECBUFFER_EMPTY;
-
-            Message.ulVersion       = SECBUFFER_VERSION;
-            Message.cBuffers        = 4;
-            Message.pBuffers        = Buffers;
-
-            scRet = g_pSecFuncTable->EncryptMessage(&m_hContext, 0, &Message, 0);
-            if(FAILED(scRet))
+            if (rc == SOCKET_ERROR)
             {
-                SetLastError(scRet);
+                dwTotSent = rc;
                 break;
-            }
-
-            pDataBuffer  = NULL;
-            pExtraBuffer = NULL;
-            for (int i = 1; i < 4; i++)
-            {
-                if (pDataBuffer == NULL && Buffers[i].BufferType == SECBUFFER_DATA)
-                {
-                    pDataBuffer = &Buffers[i];
-                }
-                if (pExtraBuffer == NULL && Buffers[i].BufferType == SECBUFFER_EXTRA)
-                {
-                    pExtraBuffer = &Buffers[i];
-                }
-            }
-
-            rc = SocketSend(this->s, (char *)pbIoBuffer, Buffers[0].cbBuffer + Buffers[1].cbBuffer + Buffers[2].cbBuffer, 0);
-
-            if ((rc == SOCKET_ERROR) && (WSAGetLastError() == WSAEWOULDBLOCK))
-            {
-                rc = nBufLen;
             }
             else
             {
-                if (rc == SOCKET_ERROR)
-                {
-                    dwTotSent = rc;
-                    break;
-                }
-                else
-                {
-                    dwTotSent += rc;
-                }
+                dwTotSent += rc;
             }
+        }
 
-        } while (dwDataToSend != 0);
+    } while (dwDataToSend != 0);
 
-    } while (FALSE);
+    delete [] pbIoBuffer;
 
-		if (pbIoBuffer)
-            delete [] pbIoBuffer;
-
-	return dwTotSent > ((DWORD)nBufLen) ? nBufLen : dwTotSent;	
+	return dwTotSent > ((DWORD)nBufLen) ? nBufLen : dwTotSent;
 }
 
 int CSsl::Recv(void *lpBuf, int nBufLen) 
@@ -353,7 +313,8 @@ int CSsl::Recv(void *lpBuf, int nBufLen)
     }
     else
     {
-        do {
+        do
+        {
             scRet = g_pSecFuncTable->QueryContextAttributes(&m_hContext,SECPKG_ATTR_STREAM_SIZES,&Sizes);
             if(scRet != SEC_E_OK) {
                 SetLastError(scRet);
@@ -361,19 +322,21 @@ int CSsl::Recv(void *lpBuf, int nBufLen)
             }
 
             cbIoBufferLength = Sizes.cbHeader + 
-                Sizes.cbMaximumMessage +
-                Sizes.cbTrailer;
+                               Sizes.cbMaximumMessage +
+                               Sizes.cbTrailer;
 
             if (!m_pbIoBuffer) m_pbIoBuffer = new BYTE[cbIoBufferLength];
             pDataBuf = new BYTE[cbIoBufferLength];
             dwBufDataLn = cbIoBufferLength;
-            if ((m_pbIoBuffer == NULL) || (pDataBuf == NULL)) {
+            if ((m_pbIoBuffer == NULL) || (pDataBuf == NULL))
+            {
                 SetLastError(ERROR_OUTOFMEMORY);
                 break;
             }
 
-            do {
-                cbData = SocketRecv(this->s, (char *)m_pbIoBuffer + m_cbIoBuffer, cbIoBufferLength - m_cbIoBuffer, 0);
+            do
+            {
+                cbData = recv(this->s, (char *)m_pbIoBuffer + m_cbIoBuffer, cbIoBufferLength - m_cbIoBuffer, 0);
 
                 if(cbData == (DWORD)SOCKET_ERROR) {
                     SetLastError(WSAGetLastError());
@@ -406,10 +369,12 @@ int CSsl::Recv(void *lpBuf, int nBufLen)
                 if (scRet == SEC_E_INCOMPLETE_MESSAGE) {
                     continue;
                 }
+
                 if (scRet == SEC_I_CONTEXT_EXPIRED) {
                     SetLastError(scRet);
                     break;
                 }
+
                 if (scRet != SEC_E_OK && scRet != SEC_I_RENEGOTIATE && scRet != SEC_I_CONTEXT_EXPIRED) {
                     SetLastError(scRet);
                     break;
@@ -417,17 +382,19 @@ int CSsl::Recv(void *lpBuf, int nBufLen)
 
                 pDataBuffer  = NULL;
                 pExtraBuffer = NULL;
-                for (int i = 1; i < 4; i++) {
-                    if (pDataBuffer == NULL && Buffers[i].BufferType == SECBUFFER_DATA) {
+                for (int i = 1; i < 4; i++)
+                {
+                    if (pDataBuffer == NULL && Buffers[i].BufferType == SECBUFFER_DATA)
                         pDataBuffer = &Buffers[i];
-                    }
-                    if (pExtraBuffer == NULL && Buffers[i].BufferType == SECBUFFER_EXTRA) {
+
+                    if (pExtraBuffer == NULL && Buffers[i].BufferType == SECBUFFER_EXTRA)
                         pExtraBuffer = &Buffers[i];
-                    }
                 }
 
-                if (pDataBuffer) {
-                    if ((dwDataLn + (pDataBuffer->cbBuffer)) > dwBufDataLn) {
+                if (pDataBuffer)
+                {
+                    if ((dwDataLn + (pDataBuffer->cbBuffer)) > dwBufDataLn)
+                    {
                         BYTE *bNewDataBuf = new BYTE[dwBufDataLn+(pDataBuffer->cbBuffer)];
                         CopyMemory(bNewDataBuf,pDataBuf,dwDataLn);
                         delete [] pDataBuf;
@@ -438,11 +405,14 @@ int CSsl::Recv(void *lpBuf, int nBufLen)
                     dwDataLn += pDataBuffer->cbBuffer;
                 }
 
-                if (pExtraBuffer) {
+                if (pExtraBuffer)
+                {
                     MoveMemory(m_pbIoBuffer, pExtraBuffer->pvBuffer, pExtraBuffer->cbBuffer);
                     m_cbIoBuffer = pExtraBuffer->cbBuffer;
                     continue;
-                } else {
+                }
+                else
+                {
                     m_cbIoBuffer = 0;
                     bCont = FALSE;
                 }
@@ -454,11 +424,13 @@ int CSsl::Recv(void *lpBuf, int nBufLen)
                         &m_hContext, 
                         FALSE, 
                         &ExtraBuffer);
+
                     if(scRet != SEC_E_OK) {
                         break;
                     }
 
-                    if(ExtraBuffer.pvBuffer) {
+                    if(ExtraBuffer.pvBuffer)
+                    {
                         MoveMemory(m_pbIoBuffer, ExtraBuffer.pvBuffer, ExtraBuffer.cbBuffer);
                         m_cbIoBuffer = ExtraBuffer.cbBuffer;
                     }
@@ -469,10 +441,10 @@ int CSsl::Recv(void *lpBuf, int nBufLen)
 
         } while (FALSE);
 
-        if (dwDataLn) {
-
-            if (dwDataLn > (DWORD)nBufLen) {
-
+        if (dwDataLn)
+        {
+            if (dwDataLn > (DWORD)nBufLen)
+            {
                 m_dwReceiveBuf = dwDataLn - ((DWORD)(nBufLen));
                 m_pbReceiveBuf = new BYTE[m_dwReceiveBuf];
 
@@ -481,13 +453,16 @@ int CSsl::Recv(void *lpBuf, int nBufLen)
 
                 CopyMemory(m_pbReceiveBuf,pDataBuf+nBufLen,m_dwReceiveBuf);
 
-            } else {
+            }
+            else
+            {
                 CopyMemory(lpBuf,pDataBuf,dwDataLn);
                 rc = dwDataLn;
             }
         }
 
-        if (pDataBuf) delete [] pDataBuf;
+        if (pDataBuf)
+            delete [] pDataBuf;
     }
 
 	return rc;
@@ -823,7 +798,7 @@ SECURITY_STATUS CSsl::ClientHandshakeLoop(PCredHandle phCreds, CtxtHandle *phCon
         {
             if (fDoRead)
             {
-                cbData = SocketRecv(this->s, (char *)(IoBuffer + cbIoBuffer), IO_BUFFER_SIZE - cbIoBuffer, 0);
+                cbData = recv(this->s, (char *)(IoBuffer + cbIoBuffer), IO_BUFFER_SIZE - cbIoBuffer, 0);
                 if (cbData == (DWORD)SOCKET_ERROR)
                 {
 					scRet = SEC_E_INTERNAL_ERROR;
@@ -1369,7 +1344,7 @@ BOOL CSsl::ServerHandshakeLoop(PCtxtHandle phContext, PCredHandle phCred, BOOL f
             if(fDoRead)
             {
 				m_bAllowPlainText = TRUE;
-				err = SocketRecv(this->s, (char *)IoBuffer+cbIoBuffer, IO_BUFFER_SIZE, 0);
+				err = recv(this->s, (char *)IoBuffer+cbIoBuffer, IO_BUFFER_SIZE, 0);
 				m_bAllowPlainText = FALSE;
 
 				if (err == (DWORD)SOCKET_ERROR || err == 0) {
