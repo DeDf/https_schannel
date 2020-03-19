@@ -296,7 +296,9 @@ int CSsl::Recv(void *lpBuf, int nBufLen)
                                Sizes.cbMaximumMessage +
                                Sizes.cbTrailer;
 
-            if (!m_pbIoBuffer) m_pbIoBuffer = new BYTE[cbIoBufferLength];
+            if (!m_pbIoBuffer)
+                m_pbIoBuffer = new BYTE[cbIoBufferLength];
+
             pDataBuf = new BYTE[cbIoBufferLength];
             dwBufDataLn = cbIoBufferLength;
             if ((m_pbIoBuffer == NULL) || (pDataBuf == NULL))
@@ -308,18 +310,20 @@ int CSsl::Recv(void *lpBuf, int nBufLen)
             do
             {
                 cbData = recv(this->s, (char *)m_pbIoBuffer + m_cbIoBuffer, cbIoBufferLength - m_cbIoBuffer, 0);
-
-                if(cbData == (DWORD)SOCKET_ERROR) {
+                if(cbData == (DWORD)SOCKET_ERROR)
+                {
                     SetLastError(WSAGetLastError());
                     break;
-                } else if (cbData == 0) {
-                    if(m_cbIoBuffer) {
+                }
+                else if (cbData == 0)
+                {
+                    if(m_cbIoBuffer)
                         scRet = SEC_E_INTERNAL_ERROR;
-                        break;
-                    } else {
-                        break;
-                    }
-                } else {
+
+                    break;
+                }
+                else
+                {
                     m_cbIoBuffer += cbData;
                 }
 
@@ -337,16 +341,18 @@ int CSsl::Recv(void *lpBuf, int nBufLen)
 
                 scRet = g_pSecFuncTable->DecryptMessage(&m_hContext,&Message,0,NULL);
 
-                if (scRet == SEC_E_INCOMPLETE_MESSAGE) {
+                if (scRet == SEC_E_INCOMPLETE_MESSAGE)
+                {
                     continue;
                 }
-
-                if (scRet == SEC_I_CONTEXT_EXPIRED) {
+                if (scRet == SEC_I_CONTEXT_EXPIRED)
+                {
                     SetLastError(scRet);
                     break;
                 }
 
-                if (scRet != SEC_E_OK && scRet != SEC_I_RENEGOTIATE && scRet != SEC_I_CONTEXT_EXPIRED) {
+                if (scRet != SEC_E_OK && scRet != SEC_I_RENEGOTIATE && scRet != SEC_I_CONTEXT_EXPIRED)
+                {
                     SetLastError(scRet);
                     break;
                 }
