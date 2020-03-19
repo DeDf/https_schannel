@@ -29,7 +29,7 @@ void Init_pSecFuncTable()
 
 //------------------------------------------------------------------
 
-SOCKET SocketConnect(const char *host, USHORT port)
+SOCKET SocketConnect(const CHAR *host, USHORT port)
 {
     SOCKET s = NULL;
 
@@ -73,17 +73,17 @@ SOCKET SocketConnect(const char *host, USHORT port)
 
 int SocketSend(SOCKET s, const char * data, int len, int nFlags)
 {
-    int OrigLen = len;
+    int toLen = len;
 
     if (s == -1)
         return -1;
 
-    if (len == 0)
-        len = (int)strlen(data);
+    if (toLen == 0)
+        toLen = (int)strlen(data);
 
-    while (len)
+    while (toLen)
     {
-        int nBytes = send(s, data, len, nFlags);
+        int nBytes = send(s, data, toLen, nFlags);
         if (nBytes <= 0)
         {
             if (isagain(nBytes))
@@ -95,11 +95,11 @@ int SocketSend(SOCKET s, const char * data, int len, int nFlags)
             return nBytes;
         }
 
-        data += nBytes;
-        len  -= nBytes;
+        data  += nBytes;
+        toLen -= nBytes;
     }
 
-    return (OrigLen - len);
+    return (len - toLen);
 }
 
 //----------------------------------------------------------------
@@ -172,107 +172,78 @@ BOOL CSsl::Connect(const char *host, USHORT port)
         return FALSE;
 }
 
-int CSsl::Send(const void* lpBuf, int nBufLen) 
+DWORD CSsl::Send(const CHAR *pBuf, DWORD BufLen) 
 {
-    int ret = -1;
+    DWORD dwSent = 0;
     SECURITY_STATUS scRet;
-	SecPkgContext_StreamSizes Sizes;
-	
-	SecBufferDesc   Message;
-	SecBuffer       Buffers[4];
 
-	PBYTE pbIoBuffer = NULL;
-	DWORD cbIoBufferLength;
-	PBYTE pbMessage;
-	DWORD cbMessage;
-
-	DWORD dwAvaLn = 0;
-	DWORD dwDataToSend = 0;
-	DWORD dwSendInd = 0;
-	DWORD dwCurrLn = 0;
-	DWORD dwTotSent = 0;
-
+    SecPkgContext_StreamSizes Sizes;
     scRet = g_pSecFuncTable->QueryContextAttributes(&m_hContext,SECPKG_ATTR_STREAM_SIZES,&Sizes);
     if(scRet != SEC_E_OK)
     {
-        return ret;
+        return -1;
     }
 
-    cbIoBufferLength = Sizes.cbHeader + 
-        Sizes.cbMaximumMessage +
-        Sizes.cbTrailer;
+    DWORD cbIoBufferLength = Sizes.cbHeader + 
+                             Sizes.cbMaximumMessage +
+                             Sizes.cbTrailer;
 
-    pbIoBuffer = new BYTE[cbIoBufferLength];
-    if (!pbIoBuffer)
+    PBYTE pbIoBuffer = new BYTE[cbIoBufferLength];
+    if (pbIoBuffer)
     {
-        return ret;
-    }
-    ZeroMemory(pbIoBuffer, cbIoBufferLength);
+        ZeroMemory(pbIoBuffer, cbIoBufferLength);
 
-    pbMessage = pbIoBuffer + Sizes.cbHeader;
-    dwAvaLn = Sizes.cbMaximumMessage;
-    dwDataToSend = (DWORD)nBufLen;
-
-    do
-    {
-        dwCurrLn = ((DWORD)nBufLen)-dwSendInd > dwAvaLn ? dwAvaLn : (((DWORD)nBufLen)-dwSendInd);
-
-        CopyMemory(pbMessage,((BYTE*)lpBuf)+dwSendInd,dwCurrLn);
-
-        dwSendInd += dwCurrLn;
-        dwDataToSend -= dwCurrLn;
-
-        cbMessage = dwCurrLn;
-
-        Buffers[0].pvBuffer     = pbIoBuffer;
-        Buffers[0].cbBuffer     = Sizes.cbHeader;
-        Buffers[0].BufferType   = SECBUFFER_STREAM_HEADER;
-
-        Buffers[1].pvBuffer     = pbMessage;
-        Buffers[1].cbBuffer     = cbMessage;
-        Buffers[1].BufferType   = SECBUFFER_DATA;
-
-        Buffers[2].pvBuffer     = pbMessage + cbMessage;
-        Buffers[2].cbBuffer     = Sizes.cbTrailer;
-        Buffers[2].BufferType   = SECBUFFER_STREAM_TRAILER;
-
-        Buffers[3].BufferType   = SECBUFFER_EMPTY;
-
-        Message.ulVersion       = SECBUFFER_VERSION;
-        Message.cBuffers        = 4;
-        Message.pBuffers        = Buffers;
-
-        scRet = g_pSecFuncTable->EncryptMessage(&m_hContext, 0, &Message, 0);
-        if(FAILED(scRet))
+        PBYTE pbMessage = pbIoBuffer + Sizes.cbHeader;
+        do
         {
-            SetLastError(scRet);
-            break;
-        }
+            DWORD cbMessage =
+                (BufLen-dwSent) > Sizes.cbMaximumMessage ? Sizes.cbMaximumMessage : (BufLen-dwSent);
 
-        int rc = SocketSend(this->s, (char *)pbIoBuffer, Buffers[0].cbBuffer + Buffers[1].cbBuffer + Buffers[2].cbBuffer, 0);
+            CopyMemory(pbMessage, (BYTE*)pBuf+dwSent, cbMessage);
 
-        if ((rc == SOCKET_ERROR) && (WSAGetLastError() == WSAEWOULDBLOCK))
-        {
-            rc = nBufLen;
-        }
-        else
-        {
-            if (rc == SOCKET_ERROR)
+            dwSent += cbMessage;
+            BufLen -= cbMessage;
+
+            SecBuffer Buffers[4];
+            Buffers[0].pvBuffer     = pbIoBuffer;
+            Buffers[0].cbBuffer     = Sizes.cbHeader;
+            Buffers[0].BufferType   = SECBUFFER_STREAM_HEADER;
+
+            Buffers[1].pvBuffer     = pbMessage;
+            Buffers[1].cbBuffer     = cbMessage;
+            Buffers[1].BufferType   = SECBUFFER_DATA;
+
+            Buffers[2].pvBuffer     = pbMessage + cbMessage;
+            Buffers[2].cbBuffer     = Sizes.cbTrailer;
+            Buffers[2].BufferType   = SECBUFFER_STREAM_TRAILER;
+
+            Buffers[3].BufferType   = SECBUFFER_EMPTY;
+
+            SecBufferDesc Message;
+            Message.ulVersion       = SECBUFFER_VERSION;
+            Message.cBuffers        = 4;
+            Message.pBuffers        = Buffers;
+
+            scRet = g_pSecFuncTable->EncryptMessage(&m_hContext, 0, &Message, 0);
+            if(scRet != SEC_E_OK)
             {
-                dwTotSent = rc;
+                dwSent = -1;
                 break;
             }
-            else
+
+            int rc = SocketSend(this->s, (char *)pbIoBuffer, Buffers[0].cbBuffer + Buffers[1].cbBuffer + Buffers[2].cbBuffer, 0);
+            if (!rc || (rc == SOCKET_ERROR))
             {
-                dwTotSent += rc;
+                dwSent = rc;
+                break;
             }
-        }
 
-    } while (dwDataToSend != 0);
+        } while (BufLen != 0);
 
-    delete [] pbIoBuffer;
+        delete [] pbIoBuffer;
+    }
 
-	return dwTotSent > ((DWORD)nBufLen) ? nBufLen : dwTotSent;
+	return dwSent;
 }
 
 int CSsl::Recv(void *lpBuf, int nBufLen) 
