@@ -252,16 +252,14 @@ int CSsl::Recv(void *lpBuf, int nBufLen)
 	SecPkgContext_StreamSizes Sizes;
 	SECURITY_STATUS scRet;
 	DWORD cbIoBufferLength;
-	DWORD cbData;
 	SecBufferDesc   Message;
 	SecBuffer       Buffers[4];
     SecBuffer *     pDataBuffer;
     SecBuffer *     pExtraBuffer;
-	SecBuffer       ExtraBuffer;
 
 	BYTE *pDataBuf = NULL;
-	DWORD dwDataLn = 0;
-	DWORD dwBufDataLn = 0;
+	DWORD dwDataLen = 0;
+	DWORD dwBufDataLen = 0;
 	BOOL bCont = TRUE;
 
     if (m_dwReceiveBuf)
@@ -287,8 +285,8 @@ int CSsl::Recv(void *lpBuf, int nBufLen)
         do
         {
             scRet = g_pSecFuncTable->QueryContextAttributes(&m_hContext,SECPKG_ATTR_STREAM_SIZES,&Sizes);
-            if(scRet != SEC_E_OK) {
-                SetLastError(scRet);
+            if(scRet != SEC_E_OK)
+            {
                 break;
             }
 
@@ -300,33 +298,29 @@ int CSsl::Recv(void *lpBuf, int nBufLen)
                 m_pbIoBuffer = new BYTE[cbIoBufferLength];
 
             pDataBuf = new BYTE[cbIoBufferLength];
-            dwBufDataLn = cbIoBufferLength;
+
+            dwBufDataLen = cbIoBufferLength;
+
             if ((m_pbIoBuffer == NULL) || (pDataBuf == NULL))
             {
-                SetLastError(ERROR_OUTOFMEMORY);
                 break;
+            }
+
+            DWORD RecvLen = recv(this->s, (char *)m_pbIoBuffer + m_cbIoBuffer, cbIoBufferLength - m_cbIoBuffer, 0);
+            if(RecvLen == 0 || RecvLen == (DWORD)SOCKET_ERROR)
+            {
+                int err = WSAGetLastError();
+                printf("recv err :%d\n", err);
+                break;
+            }
+            else
+            {
+                printf("\n~~~~~~~~~~~~~~ RecvLen = %d~~~~~~~~~~~~~~~~\n", RecvLen);
+                m_cbIoBuffer += RecvLen;
             }
 
             do
             {
-                cbData = recv(this->s, (char *)m_pbIoBuffer + m_cbIoBuffer, cbIoBufferLength - m_cbIoBuffer, 0);
-                if(cbData == (DWORD)SOCKET_ERROR)
-                {
-                    SetLastError(WSAGetLastError());
-                    break;
-                }
-                else if (cbData == 0)
-                {
-                    if(m_cbIoBuffer)
-                        scRet = SEC_E_INTERNAL_ERROR;
-
-                    break;
-                }
-                else
-                {
-                    m_cbIoBuffer += cbData;
-                }
-
                 Buffers[0].pvBuffer     = m_pbIoBuffer;
                 Buffers[0].cbBuffer     = m_cbIoBuffer;
                 Buffers[0].BufferType   = SECBUFFER_DATA;
@@ -339,21 +333,14 @@ int CSsl::Recv(void *lpBuf, int nBufLen)
                 Message.cBuffers        = 4;
                 Message.pBuffers        = Buffers;
 
-                scRet = g_pSecFuncTable->DecryptMessage(&m_hContext,&Message,0,NULL);
+                scRet = g_pSecFuncTable->DecryptMessage(&m_hContext, &Message, 0, NULL);
+                if (scRet)
+                {
+                    if (scRet == SEC_E_INCOMPLETE_MESSAGE)
+                    {
+                        continue;
+                    }
 
-                if (scRet == SEC_E_INCOMPLETE_MESSAGE)
-                {
-                    continue;
-                }
-                if (scRet == SEC_I_CONTEXT_EXPIRED)
-                {
-                    SetLastError(scRet);
-                    break;
-                }
-
-                if (scRet != SEC_E_OK && scRet != SEC_I_RENEGOTIATE && scRet != SEC_I_CONTEXT_EXPIRED)
-                {
-                    SetLastError(scRet);
                     break;
                 }
 
@@ -370,16 +357,17 @@ int CSsl::Recv(void *lpBuf, int nBufLen)
 
                 if (pDataBuffer)
                 {
-                    if ((dwDataLn + (pDataBuffer->cbBuffer)) > dwBufDataLn)
+                    if (dwDataLen + pDataBuffer->cbBuffer > dwBufDataLen)
                     {
-                        BYTE *bNewDataBuf = new BYTE[dwBufDataLn+(pDataBuffer->cbBuffer)];
-                        CopyMemory(bNewDataBuf,pDataBuf,dwDataLn);
+                        BYTE *bNewDataBuf = new BYTE[dwBufDataLen + pDataBuffer->cbBuffer];
+                        CopyMemory(bNewDataBuf,pDataBuf,dwDataLen);
                         delete [] pDataBuf;
                         pDataBuf = bNewDataBuf;
-                        dwBufDataLn = dwBufDataLn+(pDataBuffer->cbBuffer);
+                        dwBufDataLen = dwBufDataLen+(pDataBuffer->cbBuffer);
                     }
-                    CopyMemory(pDataBuf+dwDataLn,pDataBuffer->pvBuffer,pDataBuffer->cbBuffer);
-                    dwDataLn += pDataBuffer->cbBuffer;
+
+                    CopyMemory(pDataBuf+dwDataLen, pDataBuffer->pvBuffer, pDataBuffer->cbBuffer);
+                    dwDataLen += pDataBuffer->cbBuffer;
                 }
 
                 if (pExtraBuffer)
@@ -394,47 +382,26 @@ int CSsl::Recv(void *lpBuf, int nBufLen)
                     bCont = FALSE;
                 }
 
-                if (scRet == SEC_I_RENEGOTIATE)
-                {
-                    scRet = ClientHandshakeLoop(
-                        &m_hCreds, 
-                        &m_hContext, 
-                        FALSE, 
-                        &ExtraBuffer);
-
-                    if(scRet != SEC_E_OK) {
-                        break;
-                    }
-
-                    if(ExtraBuffer.pvBuffer)
-                    {
-                        MoveMemory(m_pbIoBuffer, ExtraBuffer.pvBuffer, ExtraBuffer.cbBuffer);
-                        m_cbIoBuffer = ExtraBuffer.cbBuffer;
-                    }
-
-                    if (ExtraBuffer.pvBuffer) delete [] (BYTE*)ExtraBuffer.pvBuffer;
-                }
             } while (bCont);
 
         } while (FALSE);
 
-        if (dwDataLn)
+        if (dwDataLen)
         {
-            if (dwDataLn > (DWORD)nBufLen)
+            if (dwDataLen > (DWORD)nBufLen)
             {
-                m_dwReceiveBuf = dwDataLn - ((DWORD)(nBufLen));
+                m_dwReceiveBuf = dwDataLen - ((DWORD)(nBufLen));
                 m_pbReceiveBuf = new BYTE[m_dwReceiveBuf];
 
                 CopyMemory(lpBuf,pDataBuf,nBufLen);
                 rc = nBufLen;
 
                 CopyMemory(m_pbReceiveBuf,pDataBuf+nBufLen,m_dwReceiveBuf);
-
             }
             else
             {
-                CopyMemory(lpBuf,pDataBuf,dwDataLn);
-                rc = dwDataLn;
+                CopyMemory(lpBuf,pDataBuf,dwDataLen);
+                rc = dwDataLen;
             }
         }
 
