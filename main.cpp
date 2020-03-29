@@ -24,20 +24,24 @@ int main()
         if (ssl->Connect("www.baidu.com", 443))
         {
             SendLen = ssl->Send(SendBuf, SendLen);
-
-            char buf[512];
-            while (1)
+            if (SendLen)
             {
-                int len = ssl->Recv(buf, sizeof(buf)-1);
-                if (len <= 0)
-                    break;
+                printf("SentLen : %d\n", SendLen);
+                char buf[512];
+                while (1)
+                {
+                    int len = ssl->Recv(buf, sizeof(buf)-1);
+                    if (len <= 0)
+                        break;
 
-                buf[len] = '\0';
-                fputs(buf, stdout);
+                    buf[len] = '\0';
+                    fputs(buf, stdout);
+                }
             }
         }
     }
 
     WSACleanup();
+    getchar();
     return 0;
 }

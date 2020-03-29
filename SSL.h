@@ -16,8 +16,8 @@ public:
     BOOL Connect(const CHAR *host, USHORT port);
     void Close();
     //
-    DWORD Send(const CHAR *pBuf, DWORD BufLen);
-    int Recv(      void *pBuf, int nBufLen);
+    DWORD Send(const CHAR *pBuf, DWORD BufLen);  // success : return SentLen; failed : return 0;
+    DWORD Recv(      CHAR *pBuf, DWORD BufLen);
 
     SECURITY_STATUS ClientCreateCredentials(const CHAR *pszUserName, PCredHandle phCreds);
     BOOL ClientConnect(const CHAR *szHostName);
@@ -36,7 +36,6 @@ public:
     BOOL m_bServer;
 
     CHAR *m_CsCertName;
-    BOOL m_bMachineStore;
     DWORD m_dwProtocol;
 
     PCCERT_CONTEXT  m_pCertContext;
@@ -50,8 +49,8 @@ public:
     BOOL m_bConInit;
     BOOL m_bAllowPlainText;
 
-    BYTE *m_pbReceiveBuf;
-    DWORD m_dwReceiveBuf;
+    BYTE *m_RecvBuf;
+    DWORD m_RecvBufLen;
 
     BYTE *m_pbIoBuffer;
     DWORD m_cbIoBuffer;

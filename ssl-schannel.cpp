@@ -75,7 +75,7 @@ int SocketSend(SOCKET s, const char * data, int len, int nFlags)
 {
     int toLen = len;
 
-    if (s == -1)
+    if (!s || s == -1)
         return -1;
 
     if (toLen == 0)
@@ -107,15 +107,14 @@ int SocketSend(SOCKET s, const char * data, int len, int nFlags)
 CSsl::CSsl() :
     s(NULL),
 	m_bServer(FALSE),
-	m_bMachineStore(FALSE),
 	m_dwProtocol(0),
 	m_pCertContext(NULL),
 	m_bAuthClient(FALSE),
 	m_hMyCertStore(NULL),
 	m_bConInit(FALSE),
 	m_bAllowPlainText(FALSE),
-	m_pbReceiveBuf(NULL),
-	m_dwReceiveBuf(0),
+	m_RecvBuf(NULL),
+	m_RecvBufLen(0),
 	m_pbIoBuffer(NULL),
 	m_cbIoBuffer(0),
     m_CsCertName(NULL)
@@ -145,8 +144,8 @@ CSsl::~CSsl()
     if (m_hMyCertStore)
         CertCloseStore(m_hMyCertStore, 0);
 
-	if (m_pbReceiveBuf)
-        delete [] m_pbReceiveBuf;
+	if (m_RecvBuf)
+        delete [] m_RecvBuf;
 
 	if (m_pbIoBuffer)
         delete [] m_pbIoBuffer;
@@ -174,11 +173,12 @@ BOOL CSsl::Connect(const char *host, USHORT port)
 
 DWORD CSsl::Send(const CHAR *pBuf, DWORD BufLen) 
 {
-    DWORD dwSent = 0;
-    SECURITY_STATUS scRet;
-
+    DWORD SentLen = 0;
+    if (!BufLen)
+        return 0;
+    //
     SecPkgContext_StreamSizes Sizes;
-    scRet = g_pSecFuncTable->QueryContextAttributes(&m_hContext,SECPKG_ATTR_STREAM_SIZES,&Sizes);
+    SECURITY_STATUS scRet = g_pSecFuncTable->QueryContextAttributes(&m_hContext,SECPKG_ATTR_STREAM_SIZES,&Sizes);
     if(scRet != SEC_E_OK)
     {
         return -1;
@@ -196,12 +196,11 @@ DWORD CSsl::Send(const CHAR *pBuf, DWORD BufLen)
         PBYTE pbMessage = pbIoBuffer + Sizes.cbHeader;
         do
         {
-            DWORD cbMessage =
-                (BufLen-dwSent) > Sizes.cbMaximumMessage ? Sizes.cbMaximumMessage : (BufLen-dwSent);
+            DWORD cbMessage = BufLen > Sizes.cbMaximumMessage ? Sizes.cbMaximumMessage : BufLen;
 
-            CopyMemory(pbMessage, (BYTE*)pBuf+dwSent, cbMessage);
+            CopyMemory(pbMessage, (BYTE*)pBuf+SentLen, cbMessage);
 
-            dwSent += cbMessage;
+            SentLen += cbMessage;
             BufLen -= cbMessage;
 
             SecBuffer Buffers[4];
@@ -227,14 +226,14 @@ DWORD CSsl::Send(const CHAR *pBuf, DWORD BufLen)
             scRet = g_pSecFuncTable->EncryptMessage(&m_hContext, 0, &Message, 0);
             if(scRet != SEC_E_OK)
             {
-                dwSent = -1;
+                SentLen = 0;
                 break;
             }
 
-            int rc = SocketSend(this->s, (char *)pbIoBuffer, Buffers[0].cbBuffer + Buffers[1].cbBuffer + Buffers[2].cbBuffer, 0);
-            if (!rc || (rc == SOCKET_ERROR))
+            int nSent = SocketSend(this->s, (char *)pbIoBuffer, Buffers[0].cbBuffer + Buffers[1].cbBuffer + Buffers[2].cbBuffer, 0);
+            if (!nSent || (nSent == SOCKET_ERROR))
             {
-                dwSent = rc;
+                SentLen = 0;
                 break;
             }
 
@@ -243,15 +242,13 @@ DWORD CSsl::Send(const CHAR *pBuf, DWORD BufLen)
         delete [] pbIoBuffer;
     }
 
-	return dwSent;
+	return SentLen;
 }
 
-int CSsl::Recv(void *lpBuf, int nBufLen) 
+DWORD CSsl::Recv(CHAR *pBuf, DWORD BufLen) 
 {
-	int rc = 0;
-	SecPkgContext_StreamSizes Sizes;
-	SECURITY_STATUS scRet;
-	DWORD cbIoBufferLength;
+	DWORD RecvLen = 0;
+
 	SecBufferDesc   Message;
 	SecBuffer       Buffers[4];
     SecBuffer *     pDataBuffer;
@@ -262,38 +259,38 @@ int CSsl::Recv(void *lpBuf, int nBufLen)
 	DWORD dwBufDataLen = 0;
 	BOOL bCont = TRUE;
 
-    if (m_dwReceiveBuf)
+    if (m_RecvBufLen)
     {
-        if ((DWORD)nBufLen < m_dwReceiveBuf)
+        if (BufLen < m_RecvBufLen)
         {
-            rc = nBufLen;
-            CopyMemory(lpBuf,m_pbReceiveBuf,rc);
-            MoveMemory(m_pbReceiveBuf,m_pbReceiveBuf+rc,m_dwReceiveBuf-rc);
-            m_dwReceiveBuf -= rc;
+            RecvLen = BufLen;
+            CopyMemory(pBuf, m_RecvBuf, RecvLen);
+            MoveMemory(m_RecvBuf, m_RecvBuf+RecvLen, m_RecvBufLen-RecvLen);
+            m_RecvBufLen -= RecvLen;
         }
         else
         {
-            rc = m_dwReceiveBuf;
-            CopyMemory(lpBuf,m_pbReceiveBuf,rc);
-            delete [] m_pbReceiveBuf;
-            m_pbReceiveBuf = NULL;
-            m_dwReceiveBuf = 0;
+            RecvLen = m_RecvBufLen;
+            CopyMemory(pBuf, m_RecvBuf, RecvLen);
+            delete [] m_RecvBuf;
+            m_RecvBuf = NULL;
+            m_RecvBufLen = 0;
         }
     }
     else
     {
+        SecPkgContext_StreamSizes Sizes;
+        SECURITY_STATUS scRet = g_pSecFuncTable->QueryContextAttributes(&m_hContext,SECPKG_ATTR_STREAM_SIZES,&Sizes);
+        if(scRet != SEC_E_OK)
+        {
+            return 0;
+        }
+
+        DWORD cbIoBufferLength = Sizes.cbHeader + 
+                                 Sizes.cbMaximumMessage +
+                                 Sizes.cbTrailer;
         do
         {
-            scRet = g_pSecFuncTable->QueryContextAttributes(&m_hContext,SECPKG_ATTR_STREAM_SIZES,&Sizes);
-            if(scRet != SEC_E_OK)
-            {
-                break;
-            }
-
-            cbIoBufferLength = Sizes.cbHeader + 
-                               Sizes.cbMaximumMessage +
-                               Sizes.cbTrailer;
-
             if (!m_pbIoBuffer)
                 m_pbIoBuffer = new BYTE[cbIoBufferLength];
 
@@ -306,16 +303,15 @@ int CSsl::Recv(void *lpBuf, int nBufLen)
                 break;
             }
 
+L_Recv:
             DWORD RecvLen = recv(this->s, (char *)m_pbIoBuffer + m_cbIoBuffer, cbIoBufferLength - m_cbIoBuffer, 0);
             if(RecvLen == 0 || RecvLen == (DWORD)SOCKET_ERROR)
             {
-                int err = WSAGetLastError();
-                printf("recv err :%d\n", err);
                 break;
             }
             else
             {
-                printf("\n~~~~~~~~~~~~~~ RecvLen = %d~~~~~~~~~~~~~~~~\n", RecvLen);
+                //printf("\n~~~~~~~~~~~~~~ RecvLen = %d~~~~~~~~~~~~~~~~\n", RecvLen);
                 m_cbIoBuffer += RecvLen;
             }
 
@@ -338,7 +334,7 @@ int CSsl::Recv(void *lpBuf, int nBufLen)
                 {
                     if (scRet == SEC_E_INCOMPLETE_MESSAGE)
                     {
-                        continue;
+                        goto L_Recv;
                     }
 
                     break;
@@ -388,20 +384,20 @@ int CSsl::Recv(void *lpBuf, int nBufLen)
 
         if (dwDataLen)
         {
-            if (dwDataLen > (DWORD)nBufLen)
+            if (dwDataLen > (DWORD)BufLen)
             {
-                m_dwReceiveBuf = dwDataLen - ((DWORD)(nBufLen));
-                m_pbReceiveBuf = new BYTE[m_dwReceiveBuf];
+                m_RecvBufLen = dwDataLen - ((DWORD)(BufLen));
+                m_RecvBuf = new BYTE[m_RecvBufLen];
 
-                CopyMemory(lpBuf,pDataBuf,nBufLen);
-                rc = nBufLen;
+                CopyMemory(pBuf,pDataBuf,BufLen);
+                RecvLen = BufLen;
 
-                CopyMemory(m_pbReceiveBuf,pDataBuf+nBufLen,m_dwReceiveBuf);
+                CopyMemory(m_RecvBuf,pDataBuf+BufLen,m_RecvBufLen);
             }
             else
             {
-                CopyMemory(lpBuf,pDataBuf,dwDataLen);
-                rc = dwDataLen;
+                CopyMemory(pBuf,pDataBuf,dwDataLen);
+                RecvLen = dwDataLen;
             }
         }
 
@@ -409,7 +405,7 @@ int CSsl::Recv(void *lpBuf, int nBufLen)
             delete [] pDataBuf;
     }
 
-	return rc;
+	return RecvLen;
 }
 
 void CSsl::Close()
