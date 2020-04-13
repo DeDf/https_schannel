@@ -188,11 +188,9 @@ DWORD CSsl::Send(const CHAR *pBuf, DWORD BufLen)
                              Sizes.cbMaximumMessage +
                              Sizes.cbTrailer;
 
-    PBYTE pbIoBuffer = new BYTE[cbIoBufferLength];
+    PBYTE pbIoBuffer = (PBYTE)HeapAlloc(GetProcessHeap(), 0, cbIoBufferLength);
     if (pbIoBuffer)
     {
-        ZeroMemory(pbIoBuffer, cbIoBufferLength);
-
         PBYTE pbMessage = pbIoBuffer + Sizes.cbHeader;
         do
         {
@@ -239,7 +237,7 @@ DWORD CSsl::Send(const CHAR *pBuf, DWORD BufLen)
 
         } while (BufLen != 0);
 
-        delete [] pbIoBuffer;
+        HeapFree(GetProcessHeap(), 0, pbIoBuffer);
     }
 
 	return SentLen;
