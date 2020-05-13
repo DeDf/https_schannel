@@ -121,7 +121,7 @@ CSsl::CSsl() :
 {
     Init_pSecFuncTable();
 
-	ZeroMemory(&m_SchannelCred,sizeof(m_SchannelCred));
+	ZeroMemory(&m_SchannelCred, sizeof(m_SchannelCred));
 
 	m_hCreds.dwLower = 0;
 	m_hCreds.dwUpper = 0;
@@ -202,24 +202,24 @@ DWORD CSsl::Send(const CHAR *pBuf, DWORD BufLen)
             BufLen -= cbMessage;
 
             SecBuffer Buffers[4];
-            Buffers[0].pvBuffer     = pbIoBuffer;
-            Buffers[0].cbBuffer     = Sizes.cbHeader;
-            Buffers[0].BufferType   = SECBUFFER_STREAM_HEADER;
+            Buffers[0].pvBuffer   = pbIoBuffer;
+            Buffers[0].cbBuffer   = Sizes.cbHeader;
+            Buffers[0].BufferType = SECBUFFER_STREAM_HEADER;
 
-            Buffers[1].pvBuffer     = pbMessage;
-            Buffers[1].cbBuffer     = cbMessage;
-            Buffers[1].BufferType   = SECBUFFER_DATA;
+            Buffers[1].pvBuffer   = pbMessage;
+            Buffers[1].cbBuffer   = cbMessage;
+            Buffers[1].BufferType = SECBUFFER_DATA;
 
-            Buffers[2].pvBuffer     = pbMessage + cbMessage;
-            Buffers[2].cbBuffer     = Sizes.cbTrailer;
-            Buffers[2].BufferType   = SECBUFFER_STREAM_TRAILER;
+            Buffers[2].pvBuffer   = pbMessage + cbMessage;
+            Buffers[2].cbBuffer   = Sizes.cbTrailer;
+            Buffers[2].BufferType = SECBUFFER_STREAM_TRAILER;
 
-            Buffers[3].BufferType   = SECBUFFER_EMPTY;
+            Buffers[3].BufferType = SECBUFFER_EMPTY;
 
             SecBufferDesc Message;
-            Message.ulVersion       = SECBUFFER_VERSION;
-            Message.cBuffers        = 4;
-            Message.pBuffers        = Buffers;
+            Message.ulVersion     = SECBUFFER_VERSION;
+            Message.cBuffers      = 4;
+            Message.pBuffers      = Buffers;
 
             scRet = g_pSecFuncTable->EncryptMessage(&m_hContext, 0, &Message, 0);
             if(scRet != SEC_E_OK)
@@ -247,12 +247,7 @@ DWORD CSsl::Recv(CHAR *pBuf, DWORD BufLen)
 {
 	DWORD RecvLen = 0;
 
-	SecBufferDesc   Message;
-	SecBuffer       Buffers[4];
-    SecBuffer *     pDataBuffer;
-    SecBuffer *     pExtraBuffer;
-
-	BYTE *pDataBuf = NULL;
+    BYTE *pDataBuf = NULL;
 	DWORD dwDataLen = 0;
 	DWORD dwBufDataLen = 0;
 	BOOL bCont = TRUE;
@@ -263,13 +258,14 @@ DWORD CSsl::Recv(CHAR *pBuf, DWORD BufLen)
         {
             RecvLen = BufLen;
             CopyMemory(pBuf, m_RecvBuf, RecvLen);
-            MoveMemory(m_RecvBuf, m_RecvBuf+RecvLen, m_RecvBufLen-RecvLen);
+            MoveMemory(m_RecvBuf, m_RecvBuf+RecvLen, m_RecvBufLen-RecvLen);  // opt
             m_RecvBufLen -= RecvLen;
         }
         else
         {
             RecvLen = m_RecvBufLen;
             CopyMemory(pBuf, m_RecvBuf, RecvLen);
+
             delete [] m_RecvBuf;
             m_RecvBuf = NULL;
             m_RecvBufLen = 0;
@@ -315,17 +311,19 @@ L_Recv:
 
             do
             {
-                Buffers[0].pvBuffer     = m_pbIoBuffer;
-                Buffers[0].cbBuffer     = m_cbIoBuffer;
-                Buffers[0].BufferType   = SECBUFFER_DATA;
+                SecBuffer Buffers[4];
+                Buffers[0].pvBuffer   = m_pbIoBuffer;
+                Buffers[0].cbBuffer   = m_cbIoBuffer;
+                Buffers[0].BufferType = SECBUFFER_DATA;
 
-                Buffers[1].BufferType   = SECBUFFER_EMPTY;
-                Buffers[2].BufferType   = SECBUFFER_EMPTY;
-                Buffers[3].BufferType   = SECBUFFER_EMPTY;
+                Buffers[1].BufferType = SECBUFFER_EMPTY;
+                Buffers[2].BufferType = SECBUFFER_EMPTY;
+                Buffers[3].BufferType = SECBUFFER_EMPTY;
 
-                Message.ulVersion       = SECBUFFER_VERSION;
-                Message.cBuffers        = 4;
-                Message.pBuffers        = Buffers;
+                SecBufferDesc Message;
+                Message.ulVersion     = SECBUFFER_VERSION;
+                Message.cBuffers      = 4;
+                Message.pBuffers      = Buffers;
 
                 scRet = g_pSecFuncTable->DecryptMessage(&m_hContext, &Message, 0, NULL);
                 if (scRet)
@@ -338,8 +336,9 @@ L_Recv:
                     break;
                 }
 
-                pDataBuffer  = NULL;
-                pExtraBuffer = NULL;
+                SecBuffer *pDataBuffer  = NULL;
+                SecBuffer *pExtraBuffer = NULL;
+                //
                 for (int i = 1; i < 4; i++)
                 {
                     if (pDataBuffer == NULL && Buffers[i].BufferType == SECBUFFER_DATA)
@@ -355,6 +354,7 @@ L_Recv:
                     {
                         BYTE *bNewDataBuf = new BYTE[dwBufDataLen + pDataBuffer->cbBuffer];
                         CopyMemory(bNewDataBuf,pDataBuf,dwDataLen);
+
                         delete [] pDataBuf;
                         pDataBuf = bNewDataBuf;
                         dwBufDataLen = dwBufDataLen+(pDataBuffer->cbBuffer);
@@ -382,12 +382,12 @@ L_Recv:
 
         if (dwDataLen)
         {
-            if (dwDataLen > (DWORD)BufLen)
+            if (dwDataLen > BufLen)
             {
-                m_RecvBufLen = dwDataLen - ((DWORD)(BufLen));
+                m_RecvBufLen = dwDataLen - BufLen;
                 m_RecvBuf = new BYTE[m_RecvBufLen];
 
-                CopyMemory(pBuf,pDataBuf,BufLen);
+                CopyMemory(pBuf, pDataBuf, BufLen);
                 RecvLen = BufLen;
 
                 CopyMemory(m_RecvBuf,pDataBuf+BufLen,m_RecvBufLen);
