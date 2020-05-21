@@ -9,7 +9,7 @@
 
 /////////////////////////////////////////////////////////////////////////////
 
-PSecurityFunctionTable g_pSecFuncTable;
+PSecurityFunctionTableA g_pSecFuncTable;
 
 void Init_pSecFuncTable()
 {
@@ -18,8 +18,8 @@ void Init_pSecFuncTable()
         HMODULE hSCHANNEL = LoadLibraryA("SCHANNEL.DLL");
         if (hSCHANNEL)
         {
-            INIT_SECURITY_INTERFACE pInitSecurityInterfaceA =
-                (INIT_SECURITY_INTERFACE)GetProcAddress(hSCHANNEL, "InitSecurityInterfaceA");
+            INIT_SECURITY_INTERFACE_A pInitSecurityInterfaceA =
+                (INIT_SECURITY_INTERFACE_A)GetProcAddress(hSCHANNEL, "InitSecurityInterfaceA");
 
             if (pInitSecurityInterfaceA)
                 g_pSecFuncTable = pInitSecurityInterfaceA();
@@ -178,7 +178,7 @@ DWORD CSsl::Send(const CHAR *pBuf, DWORD BufLen)
         return 0;
     //
     SecPkgContext_StreamSizes Sizes;
-    SECURITY_STATUS scRet = g_pSecFuncTable->QueryContextAttributes(&m_hContext,SECPKG_ATTR_STREAM_SIZES,&Sizes);
+    SECURITY_STATUS scRet = g_pSecFuncTable->QueryContextAttributesA(&m_hContext,SECPKG_ATTR_STREAM_SIZES,&Sizes);
     if(scRet != SEC_E_OK)
     {
         return -1;
@@ -246,10 +246,10 @@ DWORD CSsl::Send(const CHAR *pBuf, DWORD BufLen)
 DWORD CSsl::Recv(CHAR *pBuf, DWORD BufLen) 
 {
 	DWORD RecvLen = 0;
-
+    //
     BYTE *pDataBuf = NULL;
 	DWORD dwDataLen = 0;
-	DWORD dwBufDataLen = 0;
+	//
 	BOOL bCont = TRUE;
 
     if (m_RecvBufLen)
@@ -274,7 +274,7 @@ DWORD CSsl::Recv(CHAR *pBuf, DWORD BufLen)
     else
     {
         SecPkgContext_StreamSizes Sizes;
-        SECURITY_STATUS scRet = g_pSecFuncTable->QueryContextAttributes(&m_hContext,SECPKG_ATTR_STREAM_SIZES,&Sizes);
+        SECURITY_STATUS scRet = g_pSecFuncTable->QueryContextAttributesA(&m_hContext,SECPKG_ATTR_STREAM_SIZES,&Sizes);
         if(scRet != SEC_E_OK)
         {
             return 0;
@@ -290,7 +290,7 @@ DWORD CSsl::Recv(CHAR *pBuf, DWORD BufLen)
 
             pDataBuf = new BYTE[cbIoBufferLength];
 
-            dwBufDataLen = cbIoBufferLength;
+            DWORD dwBufDataLen = cbIoBufferLength;
 
             if ((m_pbIoBuffer == NULL) || (pDataBuf == NULL))
             {
@@ -581,7 +581,7 @@ BOOL CSsl::ClientConnect(const CHAR *szHostName)
 
 	do
     {
-		if (ClientCreateCredentials(LPCTSTR(m_CsCertName), &m_hCreds))
+		if (ClientCreateCredentials(m_CsCertName, &m_hCreds))
         {
 			break;
 		}
@@ -596,7 +596,7 @@ BOOL CSsl::ClientConnect(const CHAR *szHostName)
 		{
 			PCCERT_CONTEXT pRemoteCertContext = NULL;
 			SECURITY_STATUS Status =
-                g_pSecFuncTable->QueryContextAttributes(&m_hContext,SECPKG_ATTR_REMOTE_CERT_CONTEXT,(PVOID)&pRemoteCertContext);
+                g_pSecFuncTable->QueryContextAttributesA(&m_hContext,SECPKG_ATTR_REMOTE_CERT_CONTEXT,(PVOID)&pRemoteCertContext);
 			if(Status != SEC_E_OK)
             {
 				SetLastError(Status);
@@ -777,7 +777,7 @@ SECURITY_STATUS CSsl::ClientHandshakeLoop(PCredHandle phCreds, CtxtHandle *phCon
         OutBuffer.pBuffers      = OutBuffers;
         OutBuffer.ulVersion     = SECBUFFER_VERSION;
 
-        scRet = g_pSecFuncTable->InitializeSecurityContext(phCreds,
+        scRet = g_pSecFuncTable->InitializeSecurityContextA(phCreds,
                                           phContext,
                                           NULL,
                                           dwSSPIFlags,
@@ -882,7 +882,7 @@ SECURITY_STATUS CSsl::ClientHandshakeLoop(PCredHandle phCreds, CtxtHandle *phCon
     return scRet;
 }
 
-DWORD CSsl::ClientVerifyCertificate(PCCERT_CONTEXT pServerCert,const TCHAR *pszServerName,DWORD dwCertFlags)
+DWORD CSsl::ClientVerifyCertificate(PCCERT_CONTEXT pServerCert,const CHAR *pszServerName,DWORD dwCertFlags)
 {
     HTTPSPolicyCallbackData		polHttps;
     CERT_CHAIN_POLICY_PARA		PolicyPara;
@@ -1054,7 +1054,7 @@ LONG CSsl::ClientDisconnect(PCredHandle phCreds, CtxtHandle *phContext)
 		OutBuffer.pBuffers  = OutBuffers;
 		OutBuffer.ulVersion = SECBUFFER_VERSION;
 
-		Status = g_pSecFuncTable->InitializeSecurityContext(
+		Status = g_pSecFuncTable->InitializeSecurityContextA(
                     phCreds,
                     phContext,
                     NULL,
@@ -1201,7 +1201,7 @@ BOOL CSsl::ServerConnect(SOCKADDR* lpSockAddr, int* lpSockAddrLen)
 		}
 
 		if(m_bAuthClient) {
-            scRet = g_pSecFuncTable->QueryContextAttributes(&m_hContext,
+            scRet = g_pSecFuncTable->QueryContextAttributesA(&m_hContext,
                                             SECPKG_ATTR_REMOTE_CERT_CONTEXT,
                                             (PVOID)&pRemoteCertContext);
 
@@ -1218,7 +1218,7 @@ BOOL CSsl::ServerConnect(SOCKADDR* lpSockAddr, int* lpSockAddrLen)
             }
         }
 
-        scRet = g_pSecFuncTable->QueryContextAttributes(&m_hContext, SECPKG_ATTR_STREAM_SIZES, &Sizes);
+        scRet = g_pSecFuncTable->QueryContextAttributesA(&m_hContext, SECPKG_ATTR_STREAM_SIZES, &Sizes);
 
         if(scRet != SEC_E_OK) {
             SetLastError(scRet);

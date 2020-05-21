@@ -39,6 +39,8 @@ int main()
                 }
             }
         }
+
+        delete ssl;
     }
 
     WSACleanup();
