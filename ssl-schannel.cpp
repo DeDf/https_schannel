@@ -9,11 +9,11 @@
 
 /////////////////////////////////////////////////////////////////////////////
 
-PSecurityFunctionTableA g_pSecFuncTable;
+PSecurityFunctionTableA g_pSecFuncTableA;
 
 void Init_pSecFuncTable()
 {
-    if (!g_pSecFuncTable)
+    if (!g_pSecFuncTableA)
     {
         HMODULE hSCHANNEL = LoadLibraryA("SCHANNEL.DLL");
         if (hSCHANNEL)
@@ -22,7 +22,7 @@ void Init_pSecFuncTable()
                 (INIT_SECURITY_INTERFACE_A)GetProcAddress(hSCHANNEL, "InitSecurityInterfaceA");
 
             if (pInitSecurityInterfaceA)
-                g_pSecFuncTable = pInitSecurityInterfaceA();
+                g_pSecFuncTableA = pInitSecurityInterfaceA();
         }
     }
 }
@@ -133,10 +133,10 @@ CSsl::CSsl() :
 CSsl::~CSsl()
 {
     if (m_hCreds.dwLower && m_hCreds.dwUpper)
-		g_pSecFuncTable->FreeCredentialsHandle(&m_hCreds);
+		g_pSecFuncTableA->FreeCredentialsHandle(&m_hCreds);
 
 	if (m_hContext.dwLower && m_hContext.dwUpper)
-		g_pSecFuncTable->DeleteSecurityContext(&m_hContext);
+		g_pSecFuncTableA->DeleteSecurityContext(&m_hContext);
 
     if (m_pCertContext)
         CertFreeCertificateContext(m_pCertContext);
@@ -174,14 +174,15 @@ BOOL CSsl::Connect(const char *host, USHORT port)
 DWORD CSsl::Send(const CHAR *pBuf, DWORD BufLen) 
 {
     DWORD SentLen = 0;
-    if (!BufLen)
+
+    if (!pBuf || !BufLen)
         return 0;
-    //
+
     SecPkgContext_StreamSizes Sizes;
-    SECURITY_STATUS scRet = g_pSecFuncTable->QueryContextAttributesA(&m_hContext,SECPKG_ATTR_STREAM_SIZES,&Sizes);
+    SECURITY_STATUS scRet = g_pSecFuncTableA->QueryContextAttributesA(&m_hContext,SECPKG_ATTR_STREAM_SIZES,&Sizes);
     if(scRet != SEC_E_OK)
     {
-        return -1;
+        return 0;
     }
 
     DWORD cbIoBufferLength = Sizes.cbHeader + 
@@ -221,7 +222,7 @@ DWORD CSsl::Send(const CHAR *pBuf, DWORD BufLen)
             Message.cBuffers      = 4;
             Message.pBuffers      = Buffers;
 
-            scRet = g_pSecFuncTable->EncryptMessage(&m_hContext, 0, &Message, 0);
+            scRet = g_pSecFuncTableA->EncryptMessage(&m_hContext, 0, &Message, 0);
             if(scRet != SEC_E_OK)
             {
                 SentLen = 0;
@@ -274,7 +275,7 @@ DWORD CSsl::Recv(CHAR *pBuf, DWORD BufLen)
     else
     {
         SecPkgContext_StreamSizes Sizes;
-        SECURITY_STATUS scRet = g_pSecFuncTable->QueryContextAttributesA(&m_hContext,SECPKG_ATTR_STREAM_SIZES,&Sizes);
+        SECURITY_STATUS scRet = g_pSecFuncTableA->QueryContextAttributesA(&m_hContext,SECPKG_ATTR_STREAM_SIZES,&Sizes);
         if(scRet != SEC_E_OK)
         {
             return 0;
@@ -325,7 +326,7 @@ L_Recv:
                 Message.cBuffers      = 4;
                 Message.pBuffers      = Buffers;
 
-                scRet = g_pSecFuncTable->DecryptMessage(&m_hContext, &Message, 0, NULL);
+                scRet = g_pSecFuncTableA->DecryptMessage(&m_hContext, &Message, 0, NULL);
                 if (scRet)
                 {
                     if (scRet == SEC_E_INCOMPLETE_MESSAGE)
@@ -474,7 +475,7 @@ SECURITY_STATUS CSsl::ClientCreateCredentials(const CHAR *pszUserName, PCredHand
 		m_SchannelCred.dwFlags |= SCH_CRED_NO_DEFAULT_CREDS;
 		m_SchannelCred.dwFlags |= SCH_CRED_NO_DEFAULT_CREDS | SCH_CRED_NO_SYSTEM_MAPPER | SCH_CRED_REVOCATION_CHECK_CHAIN;
 
-		Status = g_pSecFuncTable->AcquireCredentialsHandleA(
+		Status = g_pSecFuncTableA->AcquireCredentialsHandleA(
 							NULL,
 							UNISP_NAME_A,
 							SECPKG_CRED_OUTBOUND,
@@ -553,7 +554,7 @@ SECURITY_STATUS CSsl::ServerCreateCredentials(const CHAR * pszUserName, PCredHan
 		m_SchannelCred.grbitEnabledProtocols = m_dwProtocol;
 		m_SchannelCred.dwFlags |= SCH_CRED_NO_DEFAULT_CREDS | SCH_CRED_NO_SYSTEM_MAPPER | SCH_CRED_REVOCATION_CHECK_CHAIN;
 		
-		Status = g_pSecFuncTable->AcquireCredentialsHandleA(
+		Status = g_pSecFuncTableA->AcquireCredentialsHandleA(
 							NULL,
 							UNISP_NAME_A,
 							SECPKG_CRED_INBOUND,
@@ -596,7 +597,7 @@ BOOL CSsl::ClientConnect(const CHAR *szHostName)
 		{
 			PCCERT_CONTEXT pRemoteCertContext = NULL;
 			SECURITY_STATUS Status =
-                g_pSecFuncTable->QueryContextAttributesA(&m_hContext,SECPKG_ATTR_REMOTE_CERT_CONTEXT,(PVOID)&pRemoteCertContext);
+                g_pSecFuncTableA->QueryContextAttributesA(&m_hContext,SECPKG_ATTR_REMOTE_CERT_CONTEXT,(PVOID)&pRemoteCertContext);
 			if(Status != SEC_E_OK)
             {
 				SetLastError(Status);
@@ -646,7 +647,7 @@ SECURITY_STATUS CSsl::ClientHandshake(PCredHandle phCreds, const CHAR *pszServer
     OutBuffer.pBuffers = OutBuffers;
     OutBuffer.ulVersion = SECBUFFER_VERSION;
 
-    scRet = g_pSecFuncTable->InitializeSecurityContextA(
+    scRet = g_pSecFuncTableA->InitializeSecurityContextA(
                     phCreds,
                     NULL,
                     (SEC_CHAR *)pszServerName,
@@ -672,12 +673,12 @@ SECURITY_STATUS CSsl::ClientHandshake(PCredHandle phCreds, const CHAR *pszServer
             SocketSend(this->s, (char *)OutBuffers[0].pvBuffer, OutBuffers[0].cbBuffer, 0);
         if (cbData != OutBuffers[0].cbBuffer)
         {
-            g_pSecFuncTable->FreeContextBuffer(OutBuffers[0].pvBuffer);
-            g_pSecFuncTable->DeleteSecurityContext(phContext);
+            g_pSecFuncTableA->FreeContextBuffer(OutBuffers[0].pvBuffer);
+            g_pSecFuncTableA->DeleteSecurityContext(phContext);
             return SEC_E_INTERNAL_ERROR;
         }
 
-        g_pSecFuncTable->FreeContextBuffer(OutBuffers[0].pvBuffer);
+        g_pSecFuncTableA->FreeContextBuffer(OutBuffers[0].pvBuffer);
         OutBuffers[0].pvBuffer = NULL;
         OutBuffers[0].cbBuffer = 0;
     }
@@ -777,7 +778,7 @@ SECURITY_STATUS CSsl::ClientHandshakeLoop(PCredHandle phCreds, CtxtHandle *phCon
         OutBuffer.pBuffers      = OutBuffers;
         OutBuffer.ulVersion     = SECBUFFER_VERSION;
 
-        scRet = g_pSecFuncTable->InitializeSecurityContextA(phCreds,
+        scRet = g_pSecFuncTableA->InitializeSecurityContextA(phCreds,
                                           phContext,
                                           NULL,
                                           dwSSPIFlags,
@@ -800,12 +801,12 @@ SECURITY_STATUS CSsl::ClientHandshakeLoop(PCredHandle phCreds, CtxtHandle *phCon
 				cbData = SocketSend(this->s, (const char *)(OutBuffers[0].pvBuffer), OutBuffers[0].cbBuffer, 0);
                 if(cbData == (DWORD)SOCKET_ERROR || cbData == 0)
                 {
-                    g_pSecFuncTable->FreeContextBuffer(OutBuffers[0].pvBuffer);
-                    g_pSecFuncTable->DeleteSecurityContext(phContext);
+                    g_pSecFuncTableA->FreeContextBuffer(OutBuffers[0].pvBuffer);
+                    g_pSecFuncTableA->DeleteSecurityContext(phContext);
                     return SEC_E_INTERNAL_ERROR;
                 }
 
-                g_pSecFuncTable->FreeContextBuffer(OutBuffers[0].pvBuffer);
+                g_pSecFuncTableA->FreeContextBuffer(OutBuffers[0].pvBuffer);
                 OutBuffers[0].pvBuffer = NULL;
                 OutBuffers[0].cbBuffer = 0;
             }
@@ -873,7 +874,7 @@ SECURITY_STATUS CSsl::ClientHandshakeLoop(PCredHandle phCreds, CtxtHandle *phCon
 
     if(FAILED(scRet))
     {
-        g_pSecFuncTable->DeleteSecurityContext(phContext);
+        g_pSecFuncTableA->DeleteSecurityContext(phContext);
     }
 
 	if (IoBuffer)
@@ -1030,7 +1031,7 @@ LONG CSsl::ClientDisconnect(PCredHandle phCreds, CtxtHandle *phContext)
 
 	do {
 
-		Status = g_pSecFuncTable->ApplyControlToken(phContext, &OutBuffer);
+		Status = g_pSecFuncTableA->ApplyControlToken(phContext, &OutBuffer);
 
 		if(FAILED(Status)) {
 			SetLastError(Status);
@@ -1054,7 +1055,7 @@ LONG CSsl::ClientDisconnect(PCredHandle phCreds, CtxtHandle *phContext)
 		OutBuffer.pBuffers  = OutBuffers;
 		OutBuffer.ulVersion = SECBUFFER_VERSION;
 
-		Status = g_pSecFuncTable->InitializeSecurityContextA(
+		Status = g_pSecFuncTableA->InitializeSecurityContextA(
                     phCreds,
                     phContext,
                     NULL,
@@ -1086,12 +1087,12 @@ LONG CSsl::ClientDisconnect(PCredHandle phCreds, CtxtHandle *phContext)
 				break;
 			}
 
-			g_pSecFuncTable->FreeContextBuffer(pbMessage);
+			g_pSecFuncTableA->FreeContextBuffer(pbMessage);
 		}
     
 	} while (FALSE);
 
-    g_pSecFuncTable->DeleteSecurityContext(phContext);
+    g_pSecFuncTableA->DeleteSecurityContext(phContext);
     return Status;
 }
 
@@ -1123,7 +1124,7 @@ LONG CSsl::ServerDisconect(PCredHandle phCreds, CtxtHandle *phContext)
 
 	do {
 
-		Status = g_pSecFuncTable->ApplyControlToken(phContext, &OutBuffer);
+		Status = g_pSecFuncTableA->ApplyControlToken(phContext, &OutBuffer);
 
 		if(FAILED(Status)) {
 			SetLastError(Status);
@@ -1145,7 +1146,7 @@ LONG CSsl::ServerDisconect(PCredHandle phCreds, CtxtHandle *phContext)
 		OutBuffer.pBuffers  = OutBuffers;
 		OutBuffer.ulVersion = SECBUFFER_VERSION;
 
-		Status = g_pSecFuncTable->AcceptSecurityContext(
+		Status = g_pSecFuncTableA->AcceptSecurityContext(
 						phCreds,
 						phContext,
 						NULL,
@@ -1177,12 +1178,12 @@ LONG CSsl::ServerDisconect(PCredHandle phCreds, CtxtHandle *phContext)
 				break;
 			}
 
-			g_pSecFuncTable->FreeContextBuffer(pbMessage);
+			g_pSecFuncTableA->FreeContextBuffer(pbMessage);
 		}
 
 	} while (FALSE);
 
-    g_pSecFuncTable->DeleteSecurityContext(phContext);
+    g_pSecFuncTableA->DeleteSecurityContext(phContext);
 
     return Status;
 }
@@ -1201,7 +1202,7 @@ BOOL CSsl::ServerConnect(SOCKADDR* lpSockAddr, int* lpSockAddrLen)
 		}
 
 		if(m_bAuthClient) {
-            scRet = g_pSecFuncTable->QueryContextAttributesA(&m_hContext,
+            scRet = g_pSecFuncTableA->QueryContextAttributesA(&m_hContext,
                                             SECPKG_ATTR_REMOTE_CERT_CONTEXT,
                                             (PVOID)&pRemoteCertContext);
 
@@ -1218,7 +1219,7 @@ BOOL CSsl::ServerConnect(SOCKADDR* lpSockAddr, int* lpSockAddrLen)
             }
         }
 
-        scRet = g_pSecFuncTable->QueryContextAttributesA(&m_hContext, SECPKG_ATTR_STREAM_SIZES, &Sizes);
+        scRet = g_pSecFuncTableA->QueryContextAttributesA(&m_hContext, SECPKG_ATTR_STREAM_SIZES, &Sizes);
 
         if(scRet != SEC_E_OK) {
             SetLastError(scRet);
@@ -1312,7 +1313,7 @@ BOOL CSsl::ServerHandshakeLoop(PCtxtHandle phContext, PCredHandle phCred, BOOL f
         OutBuffers[0].BufferType = SECBUFFER_TOKEN;
         OutBuffers[0].cbBuffer   = 0;
 
-        scRet = g_pSecFuncTable->AcceptSecurityContext(
+        scRet = g_pSecFuncTableA->AcceptSecurityContext(
                         phCred,
                         (fInitContext?NULL:phContext),
                         &InBuffer,
@@ -1336,7 +1337,7 @@ BOOL CSsl::ServerHandshakeLoop(PCtxtHandle phContext, PCredHandle phCred, BOOL f
                 err = SocketSend(this->s, (char *)OutBuffers[0].pvBuffer, OutBuffers[0].cbBuffer, 0);
 				m_bAllowPlainText = FALSE;
 
-                g_pSecFuncTable->FreeContextBuffer( OutBuffers[0].pvBuffer );
+                g_pSecFuncTableA->FreeContextBuffer( OutBuffers[0].pvBuffer );
                 OutBuffers[0].pvBuffer = NULL;
             }
         }

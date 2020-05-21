@@ -12,8 +12,8 @@ char *SendBuf = "GET / HTTP/1.1\r\n"
 
 int main()
 {
-    DWORD SendLen = (DWORD)strlen(SendBuf);
-    printf("ToSend(%d):\n%s", SendLen, SendBuf);
+    DWORD SendBufLen = (DWORD)strlen(SendBuf);
+    printf("ToSend(%d):\n%s", SendBufLen, SendBuf);
 
     WSADATA wsaData;
     WSAStartup(MAKEWORD(2, 2), &wsaData);
@@ -23,21 +23,23 @@ int main()
     {
         if (ssl->Connect("www.baidu.com", 443))
         {
-            SendLen = ssl->Send(SendBuf, SendLen);
-            if (SendLen)
+            DWORD SentLen = ssl->Send(SendBuf, SendBufLen);
+            if (SentLen == SendBufLen)
             {
-                printf("SentLen : %d\n", SendLen);
-                char buf[512];
+                printf("SentLen : %d\n", SentLen);
+                char RecvBuf[512];
                 while (1)
                 {
-                    int len = ssl->Recv(buf, sizeof(buf)-1);
-                    if (len <= 0)
+                    int RecvLen = ssl->Recv(RecvBuf, sizeof(RecvBuf)-1);
+                    if (RecvLen <= 0)
                         break;
 
-                    buf[len] = '\0';
-                    fputs(buf, stdout);
+                    RecvBuf[RecvLen] = '\0';
+                    fputs(RecvBuf, stdout);
                 }
             }
+
+            closesocket(ssl->s);
         }
 
         delete ssl;
