@@ -115,7 +115,8 @@ CSsl::CSsl() :
 	m_bAllowPlainText(FALSE),
 	m_RecvBuf(NULL),
 	m_RecvBufLen(0),
-	m_pbIoBuffer(NULL),
+    m_IoBuf(NULL),
+    m_IoBufLen(0),
 	m_cbIoBuffer(0),
     m_CsCertName(NULL)
 {
@@ -144,11 +145,11 @@ CSsl::~CSsl()
     if (m_hMyCertStore)
         CertCloseStore(m_hMyCertStore, 0);
 
+    if (m_IoBuf)
+        HeapFree(GetProcessHeap(), 0, m_IoBuf);
+
 	if (m_RecvBuf)
         delete [] m_RecvBuf;
-
-	if (m_pbIoBuffer)
-        delete [] m_pbIoBuffer;
 }
 
 BOOL CSsl::Connect(const char *host, USHORT port)
@@ -158,88 +159,83 @@ BOOL CSsl::Connect(const char *host, USHORT port)
     ssl->s = SocketConnect(host, port);
     if (ssl->s)
     {
-        if (!ssl->ClientConnect(host))
+        if (ssl->ClientConnect(host))
         {
-            closesocket(ssl->s);
-            ssl->s = NULL;
+            SECURITY_STATUS scRet = g_pSecFuncTableA->QueryContextAttributesA(&m_hContext,SECPKG_ATTR_STREAM_SIZES,&m_StreamSizes);
+            if (scRet == SEC_E_OK)
+            {
+                m_IoBufLen = m_StreamSizes.cbHeader + 
+                             m_StreamSizes.cbMaximumMessage +
+                             m_StreamSizes.cbTrailer;
+
+                m_IoBuf = (PBYTE)HeapAlloc(GetProcessHeap(), 0, m_IoBufLen);
+                if (m_IoBuf)
+                {
+                    return TRUE;
+                }
+            }
         }
+
+        closesocket(ssl->s);
+        ssl->s = NULL;
     }
 
-    if (ssl->s)
-        return TRUE;
-    else
-        return FALSE;
+    return FALSE;
 }
+
 
 DWORD CSsl::Send(const CHAR *pBuf, DWORD BufLen) 
 {
     DWORD SentLen = 0;
 
-    if (!pBuf || !BufLen)
+    if (!pBuf || !BufLen || !m_IoBuf)
         return 0;
 
-    SecPkgContext_StreamSizes Sizes;
-    SECURITY_STATUS scRet = g_pSecFuncTableA->QueryContextAttributesA(&m_hContext,SECPKG_ATTR_STREAM_SIZES,&Sizes);
-    if(scRet != SEC_E_OK)
+    PBYTE pbMessage = m_IoBuf + m_StreamSizes.cbHeader;
+    do
     {
-        return 0;
-    }
+        DWORD cbMessage = BufLen > m_StreamSizes.cbMaximumMessage ? m_StreamSizes.cbMaximumMessage : BufLen;
 
-    DWORD cbIoBufferLength = Sizes.cbHeader + 
-                             Sizes.cbMaximumMessage +
-                             Sizes.cbTrailer;
+        CopyMemory(pbMessage, pBuf + SentLen, cbMessage);
 
-    PBYTE pbIoBuffer = (PBYTE)HeapAlloc(GetProcessHeap(), 0, cbIoBufferLength);
-    if (pbIoBuffer)
-    {
-        PBYTE pbMessage = pbIoBuffer + Sizes.cbHeader;
-        do
+        SentLen += cbMessage;
+        BufLen -= cbMessage;
+
+        SecBuffer Buffers[4];
+        Buffers[0].pvBuffer   = m_IoBuf;
+        Buffers[0].cbBuffer   = m_StreamSizes.cbHeader;
+        Buffers[0].BufferType = SECBUFFER_STREAM_HEADER;
+
+        Buffers[1].pvBuffer   = pbMessage;
+        Buffers[1].cbBuffer   = cbMessage;
+        Buffers[1].BufferType = SECBUFFER_DATA;
+
+        Buffers[2].pvBuffer   = pbMessage + cbMessage;
+        Buffers[2].cbBuffer   = m_StreamSizes.cbTrailer;
+        Buffers[2].BufferType = SECBUFFER_STREAM_TRAILER;
+
+        Buffers[3].BufferType = SECBUFFER_EMPTY;
+
+        SecBufferDesc Message;
+        Message.ulVersion     = SECBUFFER_VERSION;
+        Message.cBuffers      = 4;
+        Message.pBuffers      = Buffers;
+
+        SECURITY_STATUS scRet = g_pSecFuncTableA->EncryptMessage(&m_hContext, 0, &Message, 0);
+        if(scRet != SEC_E_OK)
         {
-            DWORD cbMessage = BufLen > Sizes.cbMaximumMessage ? Sizes.cbMaximumMessage : BufLen;
+            SentLen = 0;
+            break;
+        }
 
-            CopyMemory(pbMessage, (BYTE*)pBuf+SentLen, cbMessage);
+        int nSent = SocketSend(this->s, (char *)m_IoBuf, Buffers[0].cbBuffer + Buffers[1].cbBuffer + Buffers[2].cbBuffer, 0);
+        if (!nSent || (nSent == SOCKET_ERROR))
+        {
+            SentLen = 0;
+            break;
+        }
 
-            SentLen += cbMessage;
-            BufLen -= cbMessage;
-
-            SecBuffer Buffers[4];
-            Buffers[0].pvBuffer   = pbIoBuffer;
-            Buffers[0].cbBuffer   = Sizes.cbHeader;
-            Buffers[0].BufferType = SECBUFFER_STREAM_HEADER;
-
-            Buffers[1].pvBuffer   = pbMessage;
-            Buffers[1].cbBuffer   = cbMessage;
-            Buffers[1].BufferType = SECBUFFER_DATA;
-
-            Buffers[2].pvBuffer   = pbMessage + cbMessage;
-            Buffers[2].cbBuffer   = Sizes.cbTrailer;
-            Buffers[2].BufferType = SECBUFFER_STREAM_TRAILER;
-
-            Buffers[3].BufferType = SECBUFFER_EMPTY;
-
-            SecBufferDesc Message;
-            Message.ulVersion     = SECBUFFER_VERSION;
-            Message.cBuffers      = 4;
-            Message.pBuffers      = Buffers;
-
-            scRet = g_pSecFuncTableA->EncryptMessage(&m_hContext, 0, &Message, 0);
-            if(scRet != SEC_E_OK)
-            {
-                SentLen = 0;
-                break;
-            }
-
-            int nSent = SocketSend(this->s, (char *)pbIoBuffer, Buffers[0].cbBuffer + Buffers[1].cbBuffer + Buffers[2].cbBuffer, 0);
-            if (!nSent || (nSent == SOCKET_ERROR))
-            {
-                SentLen = 0;
-                break;
-            }
-
-        } while (BufLen != 0);
-
-        HeapFree(GetProcessHeap(), 0, pbIoBuffer);
-    }
+    } while (BufLen != 0);
 
 	return SentLen;
 }
@@ -274,32 +270,21 @@ DWORD CSsl::Recv(CHAR *pBuf, DWORD BufLen)
     }
     else
     {
-        SecPkgContext_StreamSizes Sizes;
-        SECURITY_STATUS scRet = g_pSecFuncTableA->QueryContextAttributesA(&m_hContext,SECPKG_ATTR_STREAM_SIZES,&Sizes);
-        if(scRet != SEC_E_OK)
-        {
-            return 0;
-        }
+        SECURITY_STATUS scRet = SEC_E_OK;
 
-        DWORD cbIoBufferLength = Sizes.cbHeader + 
-                                 Sizes.cbMaximumMessage +
-                                 Sizes.cbTrailer;
         do
         {
-            if (!m_pbIoBuffer)
-                m_pbIoBuffer = new BYTE[cbIoBufferLength];
+            pDataBuf = new BYTE[m_IoBufLen];
 
-            pDataBuf = new BYTE[cbIoBufferLength];
+            DWORD dwBufDataLen = m_IoBufLen;
 
-            DWORD dwBufDataLen = cbIoBufferLength;
-
-            if ((m_pbIoBuffer == NULL) || (pDataBuf == NULL))
+            if ((m_IoBuf == NULL) || (pDataBuf == NULL))
             {
                 break;
             }
 
 L_Recv:
-            DWORD RecvLen = recv(this->s, (char *)m_pbIoBuffer + m_cbIoBuffer, cbIoBufferLength - m_cbIoBuffer, 0);
+            DWORD RecvLen = recv(this->s, (char *)m_IoBuf + m_cbIoBuffer, m_IoBufLen - m_cbIoBuffer, 0);
             if(RecvLen == 0 || RecvLen == (DWORD)SOCKET_ERROR)
             {
                 break;
@@ -313,7 +298,7 @@ L_Recv:
             do
             {
                 SecBuffer Buffers[4];
-                Buffers[0].pvBuffer   = m_pbIoBuffer;
+                Buffers[0].pvBuffer   = m_IoBuf;
                 Buffers[0].cbBuffer   = m_cbIoBuffer;
                 Buffers[0].BufferType = SECBUFFER_DATA;
 
@@ -367,7 +352,7 @@ L_Recv:
 
                 if (pExtraBuffer)
                 {
-                    MoveMemory(m_pbIoBuffer, pExtraBuffer->pvBuffer, pExtraBuffer->cbBuffer);
+                    MoveMemory(m_IoBuf, pExtraBuffer->pvBuffer, pExtraBuffer->cbBuffer);
                     m_cbIoBuffer = pExtraBuffer->cbBuffer;
                     continue;
                 }

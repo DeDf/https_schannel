@@ -35,6 +35,10 @@ public:
     SOCKET s;
     BOOL m_bServer;
 
+    SecPkgContext_StreamSizes m_StreamSizes;
+    PBYTE m_IoBuf;
+    DWORD m_IoBufLen;
+
     CHAR *m_CsCertName;
     DWORD m_dwProtocol;
 
@@ -52,7 +56,6 @@ public:
     BYTE *m_RecvBuf;
     DWORD m_RecvBufLen;
 
-    BYTE *m_pbIoBuffer;
     DWORD m_cbIoBuffer;
 
     bool m_permissive;
