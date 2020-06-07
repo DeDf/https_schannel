@@ -111,13 +111,14 @@ CSsl::CSsl() :
 	m_pCertContext(NULL),
 	m_bAuthClient(FALSE),
 	m_hMyCertStore(NULL),
-	m_bConInit(FALSE),
 	m_bAllowPlainText(FALSE),
-	m_RecvBuf(NULL),
-	m_RecvBufLen(0),
+	
     m_IoBuf(NULL),
     m_IoBufLen(0),
-	m_cbIoBuffer(0),
+    m_RecvDecBuf(NULL),
+    m_RecvDecBufLen(0),
+    m_RecvDecBufOffset(0),
+
     m_CsCertName(NULL)
 {
     Init_pSecFuncTable();
@@ -148,8 +149,8 @@ CSsl::~CSsl()
     if (m_IoBuf)
         HeapFree(GetProcessHeap(), 0, m_IoBuf);
 
-	if (m_RecvBuf)
-        delete [] m_RecvBuf;
+	if (m_RecvDecBuf)
+        HeapFree(GetProcessHeap(), 0, m_RecvDecBuf);
 }
 
 BOOL CSsl::Connect(const char *host, USHORT port)
@@ -168,7 +169,7 @@ BOOL CSsl::Connect(const char *host, USHORT port)
                              m_StreamSizes.cbMaximumMessage +
                              m_StreamSizes.cbTrailer;
 
-                m_IoBuf = (PBYTE)HeapAlloc(GetProcessHeap(), 0, m_IoBufLen);
+                m_IoBuf = (BYTE *)HeapAlloc(GetProcessHeap(), 0, m_IoBufLen);
                 if (m_IoBuf)
                 {
                     return TRUE;
@@ -243,151 +244,100 @@ DWORD CSsl::Send(const CHAR *pBuf, DWORD BufLen)
 DWORD CSsl::Recv(CHAR *pBuf, DWORD BufLen) 
 {
 	DWORD RecvLen = 0;
-    //
-    BYTE *pDataBuf = NULL;
-	DWORD dwDataLen = 0;
-	//
-	BOOL bCont = TRUE;
 
-    if (m_RecvBufLen)
+    if (m_IoBuf == NULL)
+        return 0;
+
+L_Decrypted:
+    if (m_RecvDecBufLen)
     {
-        if (BufLen < m_RecvBufLen)
+        DWORD RestLen = m_RecvDecBufLen - m_RecvDecBufOffset;
+        if (BufLen < RestLen)
         {
             RecvLen = BufLen;
-            CopyMemory(pBuf, m_RecvBuf, RecvLen);
-            MoveMemory(m_RecvBuf, m_RecvBuf+RecvLen, m_RecvBufLen-RecvLen);  // opt
-            m_RecvBufLen -= RecvLen;
+            CopyMemory(pBuf, m_RecvDecBuf + m_RecvDecBufOffset, RecvLen);
+            m_RecvDecBufOffset += RecvLen;
         }
         else
         {
-            RecvLen = m_RecvBufLen;
-            CopyMemory(pBuf, m_RecvBuf, RecvLen);
-
-            delete [] m_RecvBuf;
-            m_RecvBuf = NULL;
-            m_RecvBufLen = 0;
+            RecvLen = RestLen;
+            CopyMemory(pBuf, m_RecvDecBuf + m_RecvDecBufOffset, RecvLen);
+            m_RecvDecBufLen    = 0;
+            m_RecvDecBufOffset = 0;
         }
+
+        return RecvLen;
     }
-    else
-    {
-        SECURITY_STATUS scRet = SEC_E_OK;
 
-        do
-        {
-            pDataBuf = new BYTE[m_IoBufLen];
-
-            DWORD dwBufDataLen = m_IoBufLen;
-
-            if ((m_IoBuf == NULL) || (pDataBuf == NULL))
-            {
-                break;
-            }
-
+    DWORD RecvSumLen = 0;
 L_Recv:
-            DWORD RecvLen = recv(this->s, (char *)m_IoBuf + m_cbIoBuffer, m_IoBufLen - m_cbIoBuffer, 0);
-            if(RecvLen == 0 || RecvLen == (DWORD)SOCKET_ERROR)
-            {
-                break;
-            }
-            else
-            {
-                //printf("\n~~~~~~~~~~~~~~ RecvLen = %d~~~~~~~~~~~~~~~~\n", RecvLen);
-                m_cbIoBuffer += RecvLen;
-            }
+    int tRecvLen = recv(this->s, (char *)m_IoBuf + RecvSumLen, m_IoBufLen - RecvSumLen, 0);
+    if(tRecvLen == 0 || tRecvLen == SOCKET_ERROR)
+    {
+        return 0;
+    }
+    RecvSumLen += tRecvLen;
 
-            do
-            {
-                SecBuffer Buffers[4];
-                Buffers[0].pvBuffer   = m_IoBuf;
-                Buffers[0].cbBuffer   = m_cbIoBuffer;
-                Buffers[0].BufferType = SECBUFFER_DATA;
+L_Decrypt:
+    SecBuffer Buffers[4];
+    Buffers[0].pvBuffer   = m_IoBuf;
+    Buffers[0].cbBuffer   = RecvSumLen;
+    Buffers[0].BufferType = SECBUFFER_DATA;
 
-                Buffers[1].BufferType = SECBUFFER_EMPTY;
-                Buffers[2].BufferType = SECBUFFER_EMPTY;
-                Buffers[3].BufferType = SECBUFFER_EMPTY;
+    Buffers[1].BufferType = SECBUFFER_EMPTY;
+    Buffers[2].BufferType = SECBUFFER_EMPTY;
+    Buffers[3].BufferType = SECBUFFER_EMPTY;
 
-                SecBufferDesc Message;
-                Message.ulVersion     = SECBUFFER_VERSION;
-                Message.cBuffers      = 4;
-                Message.pBuffers      = Buffers;
+    SecBufferDesc Message;
+    Message.ulVersion     = SECBUFFER_VERSION;
+    Message.cBuffers      = 4;
+    Message.pBuffers      = Buffers;
 
-                scRet = g_pSecFuncTableA->DecryptMessage(&m_hContext, &Message, 0, NULL);
-                if (scRet)
-                {
-                    if (scRet == SEC_E_INCOMPLETE_MESSAGE)
-                    {
-                        goto L_Recv;
-                    }
-
-                    break;
-                }
-
-                SecBuffer *pDataBuffer  = NULL;
-                SecBuffer *pExtraBuffer = NULL;
-                //
-                for (int i = 1; i < 4; i++)
-                {
-                    if (pDataBuffer == NULL && Buffers[i].BufferType == SECBUFFER_DATA)
-                        pDataBuffer = &Buffers[i];
-
-                    if (pExtraBuffer == NULL && Buffers[i].BufferType == SECBUFFER_EXTRA)
-                        pExtraBuffer = &Buffers[i];
-                }
-
-                if (pDataBuffer)
-                {
-                    if (dwDataLen + pDataBuffer->cbBuffer > dwBufDataLen)
-                    {
-                        BYTE *bNewDataBuf = new BYTE[dwBufDataLen + pDataBuffer->cbBuffer];
-                        CopyMemory(bNewDataBuf,pDataBuf,dwDataLen);
-
-                        delete [] pDataBuf;
-                        pDataBuf = bNewDataBuf;
-                        dwBufDataLen = dwBufDataLen+(pDataBuffer->cbBuffer);
-                    }
-
-                    CopyMemory(pDataBuf+dwDataLen, pDataBuffer->pvBuffer, pDataBuffer->cbBuffer);
-                    dwDataLen += pDataBuffer->cbBuffer;
-                }
-
-                if (pExtraBuffer)
-                {
-                    MoveMemory(m_IoBuf, pExtraBuffer->pvBuffer, pExtraBuffer->cbBuffer);
-                    m_cbIoBuffer = pExtraBuffer->cbBuffer;
-                    continue;
-                }
-                else
-                {
-                    m_cbIoBuffer = 0;
-                    bCont = FALSE;
-                }
-
-            } while (bCont);
-
-        } while (FALSE);
-
-        if (dwDataLen)
+    SECURITY_STATUS scRet = g_pSecFuncTableA->DecryptMessage(&m_hContext, &Message, 0, NULL);
+    if (scRet)
+    {
+        if (scRet == SEC_E_INCOMPLETE_MESSAGE)
         {
-            if (dwDataLen > BufLen)
-            {
-                m_RecvBufLen = dwDataLen - BufLen;
-                m_RecvBuf = new BYTE[m_RecvBufLen];
+            goto L_Recv;
+        }
+    }
 
-                CopyMemory(pBuf, pDataBuf, BufLen);
-                RecvLen = BufLen;
+    SecBuffer *pDataBuffer  = NULL;
+    SecBuffer *pExtraBuffer = NULL;
+    //
+    for (int i = 1; i < 4; i++)
+    {
+        if (pDataBuffer == NULL && Buffers[i].BufferType == SECBUFFER_DATA)
+            pDataBuffer = &Buffers[i];
 
-                CopyMemory(m_RecvBuf,pDataBuf+BufLen,m_RecvBufLen);
-            }
-            else
-            {
-                CopyMemory(pBuf,pDataBuf,dwDataLen);
-                RecvLen = dwDataLen;
-            }
+        if (pExtraBuffer == NULL && Buffers[i].BufferType == SECBUFFER_EXTRA)
+            pExtraBuffer = &Buffers[i];
+    }
+
+    if (pDataBuffer)
+    {
+        if (!m_RecvDecBuf)
+            m_RecvDecBuf = (BYTE *)HeapAlloc(GetProcessHeap(), 0, m_IoBufLen);
+
+        if (m_RecvDecBufLen + pDataBuffer->cbBuffer > m_IoBufLen)
+        {
+            printf("m_RecvDecBufLen + pDataBuffer->cbBuffer > dwBufDataLen!\n");
+            __debugbreak();
         }
 
-        if (pDataBuf)
-            delete [] pDataBuf;
+        CopyMemory(m_RecvDecBuf + m_RecvDecBufLen, pDataBuffer->pvBuffer, pDataBuffer->cbBuffer);
+        m_RecvDecBufLen += pDataBuffer->cbBuffer;
     }
+
+    if (pExtraBuffer)
+    {
+        MoveMemory(m_IoBuf, pExtraBuffer->pvBuffer, pExtraBuffer->cbBuffer);
+        RecvSumLen = pExtraBuffer->cbBuffer;
+        goto L_Decrypt;
+    }
+
+    if (m_RecvDecBufLen)
+        goto L_Decrypted;
 
 	return RecvLen;
 }
@@ -450,9 +400,10 @@ SECURITY_STATUS CSsl::ClientCreateCredentials(const CHAR *pszUserName, PCredHand
 
 		m_SchannelCred.dwVersion  = SCHANNEL_CRED_VERSION;
 
-		if(m_pCertContext) {
-			m_SchannelCred.cCreds     = 1;
-			m_SchannelCred.paCred     = &m_pCertContext;
+		if(m_pCertContext)
+        {
+			m_SchannelCred.cCreds = 1;
+			m_SchannelCred.paCred = &m_pCertContext;
 		}
 
 		m_SchannelCred.grbitEnabledProtocols = m_dwProtocol;
@@ -1152,7 +1103,7 @@ LONG CSsl::ServerDisconect(PCredHandle phCreds, CtxtHandle *phContext)
 
 		if(pbMessage != NULL && cbMessage != 0)
         {
-			m_bAllowPlainText = TRUE; m_bConInit = FALSE;
+			m_bAllowPlainText = TRUE;
 			cbData = SocketSend(this->s, (char *)pbMessage, cbMessage, 0);
 
 			m_bAllowPlainText = FALSE;

@@ -33,11 +33,16 @@ public:
     DWORD ServerVerifyCertificate(PCCERT_CONTEXT  pServerCert, DWORD dwCertFlags);
 
     SOCKET s;
+    bool m_permissive;
     BOOL m_bServer;
-
     SecPkgContext_StreamSizes m_StreamSizes;
-    PBYTE m_IoBuf;
+
+    BYTE *m_IoBuf;
     DWORD m_IoBufLen;
+
+    BYTE *m_RecvDecBuf;
+    DWORD m_RecvDecBufLen;
+    DWORD m_RecvDecBufOffset;
 
     CHAR *m_CsCertName;
     DWORD m_dwProtocol;
@@ -50,13 +55,5 @@ public:
     CredHandle m_hCreds;
     CtxtHandle m_hContext;
 
-    BOOL m_bConInit;
-    BOOL m_bAllowPlainText;
-
-    BYTE *m_RecvBuf;
-    DWORD m_RecvBufLen;
-
-    DWORD m_cbIoBuffer;
-
-    bool m_permissive;
+    BOOL m_bAllowPlainText;  
 };
