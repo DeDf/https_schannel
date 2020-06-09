@@ -115,6 +115,7 @@ CSsl::CSsl() :
 	
     m_IoBuf(NULL),
     m_IoBufLen(0),
+    //
     m_RecvDecBuf(NULL),
     m_RecvDecBufLen(0),
     m_RecvDecBufOffset(0),
